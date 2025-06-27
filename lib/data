@@ -1,0 +1,91 @@
+const teamReportData = {
+          
+          '2025-01-10': {
+            'Deposit number': 163,
+            'Number of bettors': 200341 ,
+            'Number of people making first deposit': 242,
+            'Deposit amount': 1220543,
+            'Total bet': 135,
+            'First deposit amount': 120101
+          },
+          '2025-01-11': {
+            'Deposit number': 171,
+            'Number of bettors': 270111,
+            'Number of people making first deposit': 256,
+            'Deposit amount': 1402319,
+            'Total bet': 140,
+            'First deposit amount': 125009
+          },
+          '2025-01-12': {
+            'Deposit number': 187,
+            'Number of bettors': 285321,
+            'Number of people making first deposit': 223,
+            'Deposit amount': 1570411,
+            'Total bet': 102,
+            'First deposit amount': 130013
+          },
+          '2025-01-13': {
+            'Deposit number': 201,
+            'Number of bettors': 320451,
+            'Number of people making first deposit': 352,
+            'Deposit amount': 1940567,
+            'Total bet': 115,
+            'First deposit amount': 135027
+          },
+          '2025-01-14': {
+            'Deposit number': 221,
+            'Number of bettors': 260123,
+            'Number of people making first deposit': 401,
+            'Deposit amount': 2280431,
+            'Total bet': 124,
+            'First deposit amount': 204730
+          },
+          '2025-01-15': {
+            'Deposit number': 245,
+            'Number of bettors': 260231,
+            'Number of people making first deposit': 423,
+            'Deposit amount': 2320321,
+            'Total bet': 132,
+            'First deposit amount': 195019
+          },
+          '2025-01-16': {
+            'Deposit number': 271,
+            'Number of bettors': 190341,
+            'Number of people making first deposit': 351,
+            'Deposit amount': 2760543,
+            'Total bet': 101,
+            'First deposit amount': 150123
+          },
+          '2025-01-17': {
+            'Deposit number': 301,
+            'Number of bettors': 370003,
+            'Number of people making first deposit': 481,
+            'Deposit amount': 2400113,
+            'Total bet': 111,
+            'First deposit amount': 155021
+          },
+          '2025-01-18': {
+            'Deposit number': 351,
+            'Number of bettors': 400237,
+            'Number of people making first deposit': 507,
+            'Deposit amount': 2500341,
+            'Total bet': 131,
+            'First deposit amount': 160009
+          },
+          '2025-01-19': {
+            'Deposit number': 351,
+            'Number of bettors': 209113,
+            'Number of people making first deposit': 539,
+            'Deposit amount': 2953523,
+            'Total bet': 175,
+            'First deposit amount': 175013
+          },
+          '2025-01-20': {
+            'Deposit number': 312,
+            'Number of bettors': 148113,
+            'Number of people making first deposit': 491 98,
+            'Deposit amount': 2478899 148113,
+            'Total bet': 98 ,
+            'First deposit amount': 114837
+          }
+        };

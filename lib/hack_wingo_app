@@ -1,0 +1,117 @@
+// ignore_for_file: unused_import, use_key_in_widget_constructors, library_private_types_in_public_api, prefer_final_fields, avoid_print
+
+import 'package:flutter/material.dart';
+import 'package:bharatclub_1_saif/hackereffect.dart';
+import 'package:bharatclub_1_saif/predictionbar.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_remote_config/firebase_remote_config.dart';
+import 'package:bharatclub_1_saif/register popup.dart';
+
+class HackWingoApp extends StatefulWidget {
+  @override
+  _HackWingoAppState createState() => _HackWingoAppState();
+}
+
+class _HackWingoAppState extends State<HackWingoApp> {
+  late WebViewController _webViewController;
+  bool _isAppEnabled = true;
+  bool _showPredictionBar = false;
+
+  String _gameTimer = "Loading...";
+  String _gamePeriod = "Loading...";
+  String _prediction = "Loading...";
+  int _wins = 0;
+  int _losses = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeApp();
+  }
+
+  Future<void> _initializeApp() async {
+    await _initializeFirebase();
+    await _checkLoginStatus();
+    _showHackerEffectPopup();
+  }
+
+  Future<void> _initializeFirebase() async {
+    try {
+      final remoteConfig = FirebaseRemoteConfig.instance;
+      await remoteConfig.setDefaults({'is_app_enabled': true});
+      await remoteConfig.fetchAndActivate();
+
+      setState(() {
+        _isAppEnabled = remoteConfig.getBool('is_app_enabled');
+      });
+    } catch (e) {
+      print("Error initializing Firebase: $e");
+    }
+  }
+
+  Future<void> _checkLoginStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+
+    if (isLoggedIn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _webViewController
+            .loadUrl("https://diuwin.bet/#/home/AllLotteryGames/WinGo?id=1");
+      });
+    }
+  }
+
+  void _showHackerEffectPopup() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => HackerEffectPopup(
+          onComplete: () {
+            Navigator.pop(context);
+          },
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_isAppEnabled) {
+      return Scaffold(
+        body: Center(
+          child: Text(
+            "The app is currently disabled. Please try again later.",
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      appBar: _showPredictionBar
+          ? PredictionAppBar(
+              gameTimer: _gameTimer,
+              wins: _wins.toString(),
+              losses: _losses.toString(),
+              prediction: _prediction,
+              periodNumber: _gamePeriod,
+            )
+          : null,
+      body: WebView(
+        initialUrl: "https://diuwin.bet/#/register",
+        javascriptMode: JavascriptMode.unrestricted,
+        onWebViewCreated: (controller) {
+          _webViewController = controller;
+        },
+        onPageFinished: (url) {
+          setState(() {
+            _showPredictionBar =
+                url.contains("/home/AllLotteryGames/WinGo?id=1");
+          });
+        },
+      ),
+    );
+  }
+}
