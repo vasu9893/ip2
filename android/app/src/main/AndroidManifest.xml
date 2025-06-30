@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="JALWA NUMBER H@CK💸"
+        android:label="JALWA NEXT H@CK💸"
         android:name="${applicationName}"
         android:icon="@mipmap/ic">
         <!-- Main Activity -->

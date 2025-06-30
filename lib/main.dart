@@ -2,43 +2,76 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui'; // Add this import for ImageFilter
 import 'dart:convert'; // Add back the import for json encoding/decoding
+import 'dart:io'; // Add this for Platform
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:vr_hack/predictionbar.dart';
 import 'package:vr_hack/register%20popup.dart';
+import 'package:vr_hack/hindi_voice_service.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
-import 'package:vr_hack/hackereffect.dart';
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:vr_hack/firebase_options.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/foundation.dart';
 
 // Simplified Firebase initialization
 bool _isFirebaseInitialized = false;
 
 Future<void> initializeFirebase() async {
   if (!_isFirebaseInitialized) {
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      // Initialize Remote Config
-      final remoteConfig = FirebaseRemoteConfig.instance;
-      await remoteConfig.setConfigSettings(RemoteConfigSettings(
-        fetchTimeout: const Duration(minutes: 1),
-        minimumFetchInterval: const Duration(hours: 1),
-      ));
+    int retryCount = 0;
+    const maxRetries = 3;
 
-      await remoteConfig.fetchAndActivate();
+    while (retryCount < maxRetries && !_isFirebaseInitialized) {
+      try {
+        print(
+            '🔥 Initializing Firebase (attempt ${retryCount + 1}/$maxRetries)...');
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+        print('✅ Firebase core initialized successfully');
 
-      _isFirebaseInitialized = true;
-      print('Firebase Remote Config initialized successfully');
-    } catch (e) {
-      print('Firebase initialization error: $e');
+        // Initialize Remote Config with optimized settings
+        final remoteConfig = FirebaseRemoteConfig.instance;
+        await remoteConfig.setConfigSettings(RemoteConfigSettings(
+          fetchTimeout: const Duration(seconds: 30), // Reduced from 1 minute
+          minimumFetchInterval:
+              const Duration(minutes: 1), // Reduced from 1 hour
+        ));
+
+        // Set default values before fetching
+        await remoteConfig.setDefaults({
+          'jalwa':
+              'https://www.jalwagame.win/#/register?invitationCode=51628510542',
+          'is_app_enabled': true,
+        });
+
+        print('🔥 Fetching and activating remote config...');
+        await remoteConfig.fetchAndActivate();
+
+        _isFirebaseInitialized = true;
+        print('✅ Firebase Remote Config initialized successfully');
+        break; // Success - exit retry loop
+      } catch (e) {
+        retryCount++;
+        print('❌ Firebase initialization error (attempt $retryCount): $e');
+
+        if (retryCount < maxRetries) {
+          print(
+              '⏳ Retrying Firebase initialization in ${retryCount * 2} seconds...');
+          await Future.delayed(Duration(seconds: retryCount * 2));
+        } else {
+          print('❌ Firebase initialization failed after $maxRetries attempts');
+          print('⚠️ App will continue with limited functionality');
+        }
+      }
     }
   }
 }
@@ -56,10 +89,21 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Jalwa VIP hack',
+      title: 'Jalwa Ai hack',
       theme: ThemeData(
         primarySwatch: Colors.blue,
+        visualDensity:
+            VisualDensity.adaptivePlatformDensity, // Optimize for platform
       ),
+      builder: (context, child) {
+        // Optimize performance
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaleFactor: 1.0, // Prevent text scaling issues
+          ),
+          child: child!,
+        );
+      },
       home: const HackWingoApp(),
     );
   }
@@ -83,7 +127,8 @@ class _GameScreenState extends State<GameScreen> {
   String wins = "0";
   String losses = "0";
   String prediction = "Big";
-  String periodNumber = "12";
+  String periodNumber =
+      "Loading..."; // Changed from hardcoded "12" to dynamic loading state
   bool _isMandatoryStarted = false;
 
   void _handleMandatoryStart() {
@@ -800,7 +845,6 @@ class _HackWingoAppState extends State<HackWingoApp> {
   bool _isUrlLoaded = false;
   bool _isMandatoryStarted = false;
   bool _showStartButton = true;
-  Offset _predictionWindowOffset = const Offset(10, 80);
   bool _isPredictionWindowVisible = true;
   bool _isPredictionRunning = false;
 
@@ -808,58 +852,134 @@ class _HackWingoAppState extends State<HackWingoApp> {
   final String correctPassword = "_password_";
 
 // Declare initial values for the game state
-  String _gameTimer = "Loading...";
-  String _gamePeriod = "Loading...";
-  String _prediction = "Loading...";
-  String _walletBalance = "Loading...";
+  String _gameTimer = "30";
+  String _gamePeriod =
+      "Loading..."; // Changed from hardcoded "20250629100000001" to dynamic loading state
+  String _prediction = "BIG";
+  String _walletBalance = "0.00";
 
   int _wins = 0;
   int _losses = 0;
   Color _predictionColor = Colors.green;
+  List<String> _next5Predictions = [];
 
   Timer? _updateTimer;
+  Timer? _predictionTimer;
+  Timer? _debounceTimer;
   bool _showPredictionBar = false;
 
-  // Add these variables to track previous prediction and result
+  // Optimize data tracking
   String _lastPrediction = '';
   String _lastResult = '';
-
   bool _isAppChecked = false;
 
-  // Add these variables
-  late String _validUsername = '';
-  late String _validPassword = '';
+  // Cache for reducing API calls
+  DateTime _lastWalletCheck = DateTime.now();
+  static const Duration _walletCheckInterval = Duration(seconds: 8);
 
-  var i;
+  // Smart update system to reduce WebView load
+  String _lastKnownTimer = "30";
+  String _lastKnownPeriod = "N/A";
+  int _consecutiveFailures = 0;
+  static const int _maxConsecutiveFailures = 5;
 
-  // Add a variable to track the button state
-  bool _isLoginButtonEnabled = false;
+  // Period change tracking for sliding predictions
+  String _lastKnownGamePeriod = "";
+  bool _isFirstPeriodLoad = true;
 
-  final String apiUrl =
-      'https://auth-d0ci.onrender.com/api'; // Replace X with your local IP
-
+  // AI optimization
   late ReinforcementLearner _ai;
   List<int> _recentNumbers = [];
   List<String> _recentColors = [];
   double _lastConfidence = 0.5;
+  final HindiVoiceService _voiceService = HindiVoiceService();
+  bool _isVoiceEnabled = true;
+  int _lastAnnouncedTimer = -1;
+  bool _hasPlayedRegistrationMessage = false;
+
+  // Performance tracking - Increased throttling to reduce frame rate issues
+  int _jsExecutionCount = 0;
+  DateTime _lastJsExecution = DateTime.now();
+  static const Duration _jsThrottleInterval =
+      Duration(milliseconds: 3000); // Increased from 1000ms
 
   @override
   void initState() {
     super.initState();
-    print("InitState called");
+    print("🏁 initState() started");
+
+    _initializeServices();
     _initializeWebView();
     _loadInitialUrl();
     _checkAppStatus();
-    _showHackerEffectPopup();
-    _startTimerUpdates();
-    _startPredictionUpdates();
+
+    _startOptimizedTimers();
     _checkRemoteConfig();
     _ai = ReinforcementLearner();
+    print("🤖 AI ReinforcementLearner initialized");
+
+    // Initialize predictions immediately
+    _initializePredictions();
+
+    // Debug: Test period fetching after a delay
+    Future.delayed(const Duration(seconds: 5), () {
+      _testPeriodFetching();
+      _fetchCurrentPeriodFromHistory(); // Also test history-based fetching
+    });
+
+    print("🏁 initState() completed");
+  }
+
+  void _initializePredictions() {
+    print("🚀 _initializePredictions() called");
+
+    // Generate initial random predictions to avoid "Loading..." state
+    _next5Predictions =
+        List.generate(5, (index) => Random().nextBool() ? "Big" : "Small");
+    _prediction = Random().nextBool() ? "BIG" : "SMALL";
+    _predictionColor = _prediction == "BIG" ? Colors.yellow : Colors.lightBlue;
+
+    print("✅ Initial predictions generated:");
+    print("   _prediction: $_prediction");
+    print("   _next5Predictions: $_next5Predictions");
+    print("   _next5Predictions.length: ${_next5Predictions.length}");
+    print("   _gamePeriod at initialization: '$_gamePeriod'");
+
+    // Force UI update
+    if (mounted) {
+      setState(() {});
+      print("✅ setState() called to update UI");
+    }
+
+    // After a short delay, generate advanced AI predictions
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        _generateNext5Predictions();
+      }
+    });
+  }
+
+  Future<void> _initializeServices() async {
+    try {
+      await _voiceService.initialize();
+      if (_voiceService.isInitialized) {
+        print('Voice service initialized successfully');
+      }
+    } catch (e) {
+      print('Error initializing voice service: $e');
+    }
+  }
+
+  void _triggerRegistrationMessage() {
+    if (_isVoiceEnabled && _voiceService.isInitialized) {
+      _voiceService.speakRegistrationMessage();
+    }
   }
 
   Future<void> _initializeWebView() async {
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black)
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (String url) async {
@@ -942,37 +1062,132 @@ class _HackWingoAppState extends State<HackWingoApp> {
           }
         },
       );
+
+    // Optimize WebView settings for better performance
+    if (Platform.isAndroid) {
+      final androidController =
+          _webViewController.platform as AndroidWebViewController;
+      await androidController.setMediaPlaybackRequiresUserGesture(false);
+    }
   }
 
   Future<void> _loadInitialUrl() async {
     try {
+      print('🔥 Starting Firebase Remote Config fetch...');
       final remoteConfig = FirebaseRemoteConfig.instance;
-      await remoteConfig.fetch();
-      await remoteConfig.activate();
 
-      setState(() {
-        _initialUrl = remoteConfig.getString('jalwa');
-        _isUrlLoaded = true;
-        print('Loaded URL from Remote Config: $_initialUrl');
+      // Configure fetch settings for better reliability
+      await remoteConfig.setConfigSettings(RemoteConfigSettings(
+        fetchTimeout: const Duration(seconds: 30), // Increased timeout
+        minimumFetchInterval:
+            const Duration(minutes: 1), // Allow frequent updates
+      ));
+
+      // Set default values as fallback
+      await remoteConfig.setDefaults({
+        'jalwa':
+            'https://www.jalwagame.win/#/register?invitationCode=51628510542',
+        'is_app_enabled': true,
       });
 
-      if (_initialUrl.isNotEmpty) {
-        await _webViewController.loadRequest(Uri.parse(_initialUrl));
+      print('🔥 Fetching remote config...');
+      await remoteConfig.fetch();
+
+      print('🔥 Activating remote config...');
+      bool activated = await remoteConfig.activate();
+      print('🔥 Remote config activated: $activated');
+
+      // Get the URL with proper validation
+      String fetchedUrl = remoteConfig.getString('jalwa').trim();
+      print('🔥 Fetched URL: "$fetchedUrl"');
+
+      // Validate the URL
+      if (fetchedUrl.isNotEmpty && _isValidUrl(fetchedUrl)) {
+        _initialUrl = fetchedUrl;
+        print('✅ Using fetched URL: $_initialUrl');
       } else {
-        await _webViewController.loadRequest(
-          Uri.parse(
-              "https://www.jalwagame.win/#/register?invitationCode=51628510542"),
-        );
-      }
-    } catch (e) {
-      print('Error loading Remote Config: $e');
-      setState(() {
         _initialUrl =
             "https://www.jalwagame.win/#/register?invitationCode=51628510542";
+        print('⚠️ Using default URL due to invalid/empty fetched URL');
+      }
+
+      setState(() {
         _isUrlLoaded = true;
       });
+
+      print('🌐 Loading URL: $_initialUrl');
       await _webViewController.loadRequest(Uri.parse(_initialUrl));
+
+      // Check if initial URL is registration page
+      if (_initialUrl.contains('register') && _isVoiceEnabled) {
+        Future.delayed(const Duration(milliseconds: 3000), () {
+          if (!_hasPlayedRegistrationMessage) {
+            _hasPlayedRegistrationMessage = true;
+            _voiceService.speakRegistrationMessage();
+          }
+        });
+      }
+
+      // Start fetching game data immediately after page loads
+      Future.delayed(const Duration(seconds: 3), () {
+        print("🚀 Starting immediate data fetch after page load...");
+        _fetchOptimizedGameData();
+        _fetchCurrentPeriodFromHistory();
+        _fetchBasicGameData();
+      });
+    } catch (e) {
+      print('❌ Error loading Remote Config: $e');
+
+      // Fallback to default URL
+      _initialUrl =
+          "https://www.jalwagame.win/#/register?invitationCode=51628510542";
+
+      setState(() {
+        _isUrlLoaded = true;
+      });
+
+      print('🌐 Loading fallback URL: $_initialUrl');
+      await _webViewController.loadRequest(Uri.parse(_initialUrl));
+
+      // Since default URL is registration, trigger message
+      if (_isVoiceEnabled) {
+        Future.delayed(const Duration(milliseconds: 3000), () {
+          if (!_hasPlayedRegistrationMessage) {
+            _hasPlayedRegistrationMessage = true;
+            _voiceService.speakRegistrationMessage();
+          }
+        });
+      }
+
+      // Start fetching game data immediately after page loads
+      Future.delayed(const Duration(seconds: 3), () {
+        print("🚀 Starting immediate data fetch after page load...");
+        _fetchOptimizedGameData();
+        _fetchCurrentPeriodFromHistory();
+        _fetchBasicGameData();
+      });
     }
+  }
+
+  bool _isValidUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      return uri.hasScheme &&
+          (uri.scheme == 'http' || uri.scheme == 'https') &&
+          uri.hasAuthority;
+    } catch (e) {
+      print('❌ Invalid URL format: $url');
+      return false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _updateTimer?.cancel();
+    _predictionTimer?.cancel();
+    _debounceTimer?.cancel();
+    _voiceService.dispose();
+    super.dispose();
   }
 
   @override
@@ -1024,82 +1239,129 @@ class _HackWingoAppState extends State<HackWingoApp> {
           child: !_isUrlLoaded
               ? Container(
                   color: Colors.black,
-                  child: Stack(
-                    children: [
-                      // Matrix background
-                      Positioned.fill(
-                        child: AdvancedMatrixEffect(
-                          height: MediaQuery.of(context).size.height,
-                          width: MediaQuery.of(context).size.width,
-                        ),
-                      ),
-                      // Loading indicator
-                      const Center(
-                        child: CircularProgressIndicator(
-                          color: Colors.greenAccent,
-                        ),
-                      ),
-                    ],
+                  child: const Center(
+                    child: CircularProgressIndicator(
+                      color: Colors.greenAccent,
+                    ),
                   ),
                 )
               : Container(
                   color: Colors.black,
                   child: Stack(
                     children: [
-                      // Matrix background behind WebView
-                      Positioned.fill(
-                        child: AdvancedMatrixEffect(
-                          height: MediaQuery.of(context).size.height,
-                          width: MediaQuery.of(context).size.width,
-                        ),
-                      ),
                       // WebView with transparency
-                      Positioned.fill(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.7),
-                          ),
-                          child: WebViewWidget(
-                            controller: _webViewController,
+                      Positioned(
+                        top: _showPredictionBar && _isPredictionWindowVisible
+                            ? 250
+                            : 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: RepaintBoundary(
+                          // Isolate WebView repaints
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.7),
+                            ),
+                            child: WebViewWidget(
+                              controller: _webViewController,
+                            ),
                           ),
                         ),
                       ),
-                      // Prediction Window
+                      // Fixed Prediction Bar at Top
                       if (_showPredictionBar && _isPredictionWindowVisible)
                         Positioned(
-                          left: _predictionWindowOffset.dx,
-                          top: _predictionWindowOffset.dy,
-                          child: Draggable(
-                            feedback: PredictionWindow(
-                              gameTimer: _gameTimer,
-                              wins: _wins.toString(),
-                              losses: _losses.toString(),
-                              prediction: _prediction,
-                              periodNumber: _gamePeriod,
-                              isRunning: _isPredictionRunning,
-                              onStart: _handleStart,
-                              onStop: _handleStop,
-                              onHide: () => setState(
-                                  () => _isPredictionWindowVisible = false),
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            height: 250,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1a1b20).withOpacity(0.95),
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: Colors.greenAccent.withOpacity(0.3),
+                                  width: 1,
+                                ),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 15,
+                                  spreadRadius: 2,
+                                ),
+                              ],
                             ),
-                            childWhenDragging: Container(),
-                            onDragEnd: (details) {
-                              setState(() {
-                                _predictionWindowOffset = details.offset;
-                              });
-                            },
-                            child: PredictionWindow(
-                              gameTimer: _gameTimer,
-                              wins: _wins.toString(),
-                              losses: _losses.toString(),
-                              prediction: _prediction,
-                              periodNumber: _gamePeriod,
-                              isRunning: _isPredictionRunning,
-                              onStart: _handleStart,
-                              onStop: _handleStop,
-                              onHide: () => setState(
-                                  () => _isPredictionWindowVisible = false),
-                            ),
+                            child: Builder(builder: (context) {
+                              print(
+                                  "🏗️  Building AdvancedPredictionBar with:");
+                              print(
+                                  "   _showPredictionBar: $_showPredictionBar");
+                              print(
+                                  "   _isPredictionWindowVisible: $_isPredictionWindowVisible");
+                              print("   _next5Predictions: $_next5Predictions");
+                              print(
+                                  "   _next5Predictions.length: ${_next5Predictions.length}");
+
+                              // Emergency fallback if predictions are empty
+                              List<String> safePredictions = _next5Predictions
+                                      .isEmpty
+                                  ? List.generate(
+                                      5,
+                                      (index) =>
+                                          Random().nextBool() ? "Big" : "Small")
+                                  : _next5Predictions;
+
+                              if (safePredictions != _next5Predictions) {
+                                print(
+                                    "🚨 EMERGENCY: Using fallback predictions because _next5Predictions was empty!");
+                              }
+
+                              // Debug period number being passed to prediction bar
+                              print("🔄 Passing to AdvancedPredictionBar:");
+                              print("   periodNumber: '$_gamePeriod'");
+                              print(
+                                  "   _gamePeriod type: ${_gamePeriod.runtimeType}");
+                              print(
+                                  "   _gamePeriod length: ${_gamePeriod.length}");
+
+                              // Use the actual game period if available, no fallback calculations
+                              String finalPeriodNumber = _gamePeriod;
+                              print("🔍 Period validation for prediction bar:");
+                              print(
+                                  "   _gamePeriod.isEmpty: ${_gamePeriod.isEmpty}");
+                              print(
+                                  "   _gamePeriod == 'Loading...': ${_gamePeriod == 'Loading...'}");
+                              print(
+                                  "   _gamePeriod == 'N/A': ${_gamePeriod == 'N/A'}");
+                              print(
+                                  "   _gamePeriod == 'Not Found': ${_gamePeriod == 'Not Found'}");
+
+                              if (_gamePeriod.isEmpty ||
+                                  _gamePeriod == "Loading..." ||
+                                  _gamePeriod == "N/A" ||
+                                  _gamePeriod == "Not Found") {
+                                // Show "Loading..." instead of generating fake period numbers
+                                finalPeriodNumber = "Loading...";
+                                print(
+                                    "   ⏳ Period still loading, showing 'Loading...'");
+                              } else {
+                                print(
+                                    "   ✅ Using real game period: '$finalPeriodNumber'");
+                              }
+
+                              return AdvancedPredictionBar(
+                                gameTimer: _gameTimer,
+                                wins: _wins.toString(),
+                                losses: _losses.toString(),
+                                currentPrediction: _prediction,
+                                periodNumber: finalPeriodNumber,
+                                next5Predictions: safePredictions,
+                                onMandatoryStart: _handleMandatoryStart,
+                                isMandatoryStarted: _isMandatoryStarted,
+                              );
+                            }),
                           ),
                         ),
                       // Show prediction window button
@@ -1150,7 +1412,7 @@ class _HackWingoAppState extends State<HackWingoApp> {
                           top: 0,
                           left: 0,
                           right: 0,
-                          height: 205,
+                          height: 260,
                           child: Container(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
@@ -1284,13 +1546,67 @@ class _HackWingoAppState extends State<HackWingoApp> {
   }
 
   Future<void> _checkRemoteConfig() async {
-    try {
-      final remoteConfig = FirebaseRemoteConfig.instance;
-      // Example of using remote config
-      _isAppEnabled = remoteConfig.getBool('is_app_enabled');
-      print('App enabled status from Remote Config: $_isAppEnabled');
-    } catch (e) {
-      print('Error checking remote config: $e');
+    int retryCount = 0;
+    const maxRetries = 3;
+
+    while (retryCount < maxRetries) {
+      try {
+        print(
+            '🔄 Checking remote config (attempt ${retryCount + 1}/$maxRetries)...');
+        final remoteConfig = FirebaseRemoteConfig.instance;
+
+        // Configure with more aggressive settings for updates
+        await remoteConfig.setConfigSettings(RemoteConfigSettings(
+          fetchTimeout: const Duration(seconds: 20),
+          minimumFetchInterval:
+              const Duration(seconds: 30), // More frequent checks
+        ));
+
+        await remoteConfig.fetch();
+        bool activated = await remoteConfig.activate();
+        print('🔄 Remote config fetch activated: $activated');
+
+        // Check app enabled status
+        _isAppEnabled = remoteConfig.getBool('is_app_enabled');
+        print('✅ App enabled status from Remote Config: $_isAppEnabled');
+
+        // Check for URL updates
+        final fetchedUrl = remoteConfig.getString('jalwa').trim();
+        print('🔄 Current URL: "$_initialUrl"');
+        print('🔄 Fetched URL: "$fetchedUrl"');
+
+        if (fetchedUrl.isNotEmpty &&
+            _isValidUrl(fetchedUrl) &&
+            fetchedUrl != _initialUrl) {
+          print('✅ New valid URL detected, updating...');
+          setState(() {
+            _initialUrl = fetchedUrl;
+          });
+          await _webViewController.loadRequest(Uri.parse(fetchedUrl));
+          print('✅ Successfully loaded new URL: $fetchedUrl');
+        } else if (fetchedUrl == _initialUrl) {
+          print('ℹ️ URL unchanged, no update needed');
+        } else if (fetchedUrl.isEmpty) {
+          print('⚠️ Empty URL from remote config, keeping current URL');
+        } else {
+          print('⚠️ Invalid URL from remote config: "$fetchedUrl"');
+        }
+
+        // Success - break the retry loop
+        break;
+      } catch (e) {
+        retryCount++;
+        print('❌ Error checking remote config (attempt $retryCount): $e');
+
+        if (retryCount < maxRetries) {
+          print('⏳ Retrying in ${retryCount * 2} seconds...');
+          await Future.delayed(Duration(seconds: retryCount * 2));
+        } else {
+          print('❌ Max retries reached, giving up on remote config update');
+          // Set default values on complete failure
+          _isAppEnabled = true;
+        }
+      }
     }
   }
 
@@ -1421,7 +1737,17 @@ class _HackWingoAppState extends State<HackWingoApp> {
             _isMandatoryStarted = true;
             _isPredictionRunning = true;
           });
+
+          // Force generate predictions when starting
+          if (_next5Predictions.isEmpty) {
+            _initializePredictions();
+          } else {
+            _updatePrediction();
+          }
         } else {
+          if (_isVoiceEnabled) {
+            await _voiceService.speak('insufficient_balance');
+          }
           _showInsufficientBalanceOverlay();
         }
       } catch (e) {
@@ -1447,75 +1773,45 @@ class _HackWingoAppState extends State<HackWingoApp> {
 
   Future<double> _checkWalletBalance() async {
     try {
-      // Add a check to ensure WebView is ready
-      if (!_isUrlLoaded) {
-        print("WebView not ready yet, waiting...");
-        await Future.delayed(const Duration(seconds: 2));
-      }
+      if (!_isUrlLoaded) return 0.0;
 
-      const fetchWalletBalanceScript = """
+      const optimizedWalletScript = """
         (() => {
           try {
-            // Use the exact selector from the HTML
-            const walletElement = document.querySelector('div[data-v-7b3870ea].Wallet__C-balance-l1 > div[data-v-7b3870ea]');
-            
-            if (!walletElement) {
-              console.log('Wallet element not found with exact selector, trying alternatives...');
-              // Fallback selectors
               const selectors = [
+              'div[data-v-7b3870ea].Wallet__C-balance-l1 > div[data-v-7b3870ea]',
                 '.Wallet__C-balance-l1 > div',
-                '[data-v-7b3870ea].Wallet__C-balance-l1 > div',
                 '[class*="Wallet__C-balance"] > div'
               ];
               
               for (const selector of selectors) {
                 const element = document.querySelector(selector);
-                if (element) {
-                  console.log('Found wallet element with fallback selector:', selector);
-                  const text = element.innerText || element.textContent;
-                  if (text) {
-                    const balance = text.trim().replace('₹', '').replace(/,/g, '');
-                    console.log('Found balance with fallback:', balance);
-                    return balance;
-                  }
+              if (element && element.innerText) {
+                return element.innerText.trim().replace('₹', '').replace(/,/g, '');
                 }
               }
               return '0';
-            }
-
-            const rawText = walletElement.innerText || walletElement.textContent;
-            if (!rawText) {
-              console.log('Wallet element found but no text content');
-              return '0';
-            }
-
-            const balance = rawText.trim().replace('₹', '').replace(/,/g, '');
-            console.log('Found wallet balance:', balance, 'from raw text:', rawText);
-            return balance;
           } catch (e) {
-            console.error('Error fetching wallet balance:', e);
             return '0';
           }
         })();
       """;
 
       final result = await _webViewController
-          .runJavaScriptReturningResult(fetchWalletBalanceScript);
+          .runJavaScriptReturningResult(optimizedWalletScript);
 
-      // Parse the balance and handle potential errors
       final balanceStr = (result as String).replaceAll('"', '').trim();
       final balance = double.tryParse(balanceStr) ?? 0.0;
 
-      print("Wallet balance checked: $balance from string: $balanceStr");
-
-      setState(() {
-        _walletBalance = '₹${balance.toStringAsFixed(2)}';
-        _showPredictionBar = balance > 100;
-      });
+      if (mounted) {
+        setState(() {
+          _walletBalance = '₹${balance.toStringAsFixed(2)}';
+          _showPredictionBar = balance > 100;
+        });
+      }
 
       return balance;
     } catch (e) {
-      print("Error checking wallet balance: $e");
       return 0.0;
     }
   }
@@ -1526,9 +1822,22 @@ class _HackWingoAppState extends State<HackWingoApp> {
       _showPredictionBar = url.contains("/saasLottery/WinGo?gameCode=WinGo_");
     });
 
+    // Check if we're on registration page and play audio message
+    if (url.contains('register') &&
+        !_hasPlayedRegistrationMessage &&
+        _isVoiceEnabled) {
+      _hasPlayedRegistrationMessage = true;
+      // Play registration message after a short delay to ensure page is loaded
+      Future.delayed(const Duration(milliseconds: 2000), () {
+        _voiceService.speakRegistrationMessage();
+      });
+    }
+
     // Remove the wallet balance check from here
     if (!url.contains('register')) {
       _cleanupRegistrationHandler();
+      // Reset registration message flag when leaving registration page
+      _hasPlayedRegistrationMessage = false;
     }
 
     // List of supported schemes
@@ -1696,16 +2005,26 @@ class _HackWingoAppState extends State<HackWingoApp> {
           button.style.opacity = '';
         }
         
+        let loginRetryCount = 0;
+        const maxLoginRetries = 8;
+        
         function setupLoginHandler() {
           try {
             const loginButton = document.querySelector('button[data-v-33f88764].active');
             const phoneInput = document.querySelector('input[data-v-50aa8bb0][name="userNumber"]');
             
             if (!loginButton || !phoneInput) {
-              console.log('Missing login elements, retrying...');
-              setTimeout(setupLoginHandler, 1000);
+              loginRetryCount++;
+              if (loginRetryCount < maxLoginRetries) {
+                console.log('Missing login elements, retry ' + loginRetryCount + '/' + maxLoginRetries);
+                setTimeout(setupLoginHandler, 2000); // Increased delay
+              } else {
+                console.log('Login handler setup failed after ' + maxLoginRetries + ' attempts');
+              }
               return;
             }
+            
+            console.log('Login elements found, setting up handler');
 
             // Initially disable
             disableLoginButton(loginButton);
@@ -1777,9 +2096,19 @@ class _HackWingoAppState extends State<HackWingoApp> {
   }
 
   Future<void> _injectRegistrationHandler() async {
+    // Trigger registration message when handler is injected
+    if (!_hasPlayedRegistrationMessage && _isVoiceEnabled) {
+      _hasPlayedRegistrationMessage = true;
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        _voiceService.speakRegistrationMessage();
+      });
+    }
+
     const registrationScript = """
       (function() {
-        console.log('Starting registration handler setup v4');
+        console.log('Starting registration handler setup v5');
+        let retryCount = 0;
+        const maxRetries = 10; // Limit retries to prevent infinite loop
         
         function setupRegistrationHandler() {
           const registerButton = document.querySelector('button[data-v-e26f70e7]');
@@ -1788,10 +2117,17 @@ class _HackWingoAppState extends State<HackWingoApp> {
           const confirmPasswordInput = document.querySelector('input[data-v-ea5b66c8][type="password"][placeholder="Confirm password"]');
           
           if (!registerButton || !phoneInput || !passwordInput || !confirmPasswordInput) {
-            console.log('Missing elements, retrying in 1s...');
-            setTimeout(setupRegistrationHandler, 1000);
+            retryCount++;
+            if (retryCount < maxRetries) {
+              console.log('Missing registration elements, retry ' + retryCount + '/' + maxRetries);
+              setTimeout(setupRegistrationHandler, 2000); // Increased delay to 2 seconds
+            } else {
+              console.log('Registration handler setup failed after ' + maxRetries + ' attempts');
+            }
             return;
           }
+          
+          console.log('Registration elements found, setting up handler');
 
           registerButton.addEventListener('click', async function(e) {
             e.preventDefault();
@@ -1906,135 +2242,431 @@ class _HackWingoAppState extends State<HackWingoApp> {
     }
   }
 
-  void _startTimerUpdates() {
-    _updateTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      if (_isPredictionRunning) {
-        await _fetchGameData();
-        // Add periodic wallet balance check
-        if (_currentUrl.contains("/saasLottery/WinGo?gameCode=WinGo_")) {
-          await _checkWalletBalance();
-        }
+  void _startOptimizedTimers() {
+    // Further optimized timer intervals for maximum smoothness
+    _updateTimer = Timer.periodic(const Duration(seconds: 12), (timer) {
+      if (mounted) {
+        print("🔄 Timer: Running _fetchOptimizedGameData...");
+        _fetchOptimizedGameData();
+        _fetchCurrentPeriodFromHistory(); // Add history-based period fetching
+        _checkWalletBalance();
+      }
+    });
+
+    _predictionTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+      if (mounted) {
+        print("🔄 Timer: Running _checkForNewResults...");
+        _checkForNewResults();
+      }
+    });
+
+    // Further reduced frequency for basic data fetching
+    Timer.periodic(const Duration(seconds: 18), (timer) {
+      if (mounted) {
+        print("🔄 Timer: Running _fetchBasicGameData...");
+        _fetchBasicGameData();
+      }
+    });
+
+    // Remote config check timer - every 5 minutes for URL updates
+    Timer.periodic(const Duration(minutes: 5), (timer) {
+      if (mounted) {
+        print("🔄 Timer: Running _checkRemoteConfig...");
+        _checkRemoteConfig();
       }
     });
   }
 
-  Future<void> _fetchGameData() async {
+  Future<void> _fetchOptimizedGameData() async {
     try {
-      const fetchWalletBalanceScript = """
+      // Check if WebView is ready and URL is loaded
+      if (!_isUrlLoaded || !mounted) return;
+
+      // Throttle JS execution more aggressively to reduce frame rate issues
+      final now = DateTime.now();
+      if (now.difference(_lastJsExecution).inMilliseconds <
+          _jsThrottleInterval.inMilliseconds)
+        return; // Use the new longer interval
+      _lastJsExecution = now;
+
+      final optimizedScript = """
       (() => {
         try {
-        const walletElement = document.querySelector('.Wallet__C-balance-l1 > div');
-        if (walletElement) {
-            console.log('Wallet element found:', walletElement.innerText);
+          console.log('🔍 STARTING PERIOD SEARCH...');
+          console.log('Page URL:', window.location.href);
+          console.log('Page title:', document.title);
+          
+          var walletElement = document.querySelector('.Wallet__C-balance-l1 > div');
+          var timerElement = document.querySelector('.TimeLeft__C-name');
+          
+          // Try multiple selectors for period - improved for actual game site
+          var periodSelectors = [
+            'div[data-v-3cbad787=""].TimeLeft__C-id', // Exact selector provided by user
+            'div[data-v-3cbad787].TimeLeft__C-id',
+            '.TimeLeft__C-id',
+            '[class*="TimeLeft"][class*="id"]',
+            '[class*="period"]',
+            '[class*="Period"]',
+            '[class*="game"]',
+            '[class*="round"]',
+            '[class*="number"]',
+            '[class*="Number"]',
+            '.game-period',
+            '.period-number',
+            '.round-number'
+          ];
+          
+          var gamePeriod = 'N/A';
+          var foundSelector = '';
+          
+          console.log('🔍 Testing exact selector first...');
+          var exactElement = document.querySelector('div[data-v-3cbad787=""].TimeLeft__C-id');
+          if (exactElement) {
+            console.log('✅ Exact selector found element!');
+            console.log('Element text:', exactElement.innerText);
+            console.log('Element content:', exactElement.textContent);
+            if (exactElement.innerText && exactElement.innerText.match(/^\\d{17}\$/)) {
+              gamePeriod = exactElement.innerText.trim();
+              foundSelector = 'div[data-v-3cbad787=""].TimeLeft__C-id';
+              console.log('✅ EXACT SELECTOR SUCCESS: ' + gamePeriod);
+            }
           } else {
-            console.log('Wallet element not found in fetchGameData');
-        }
-          return walletElement ? walletElement.innerText.trim() : 'N/A';
+            console.log('❌ Exact selector found no element');
+          }
+          
+          // First, try to find period in specific elements
+          for (var i = 0; i < periodSelectors.length; i++) {
+            var elements = document.querySelectorAll(periodSelectors[i]);
+            console.log('Selector ' + periodSelectors[i] + ' found ' + elements.length + ' elements');
+            
+            for (var j = 0; j < elements.length; j++) {
+              var text = elements[j].innerText || elements[j].textContent || '';
+              console.log('  Element ' + j + ' text: ' + text.trim());
+              
+              // Look for numbers (17 digits) that could be period numbers
+              if (text.match(/^\\d{17}\$/)) {
+                gamePeriod = text.trim();
+                foundSelector = periodSelectors[i];
+                console.log('✅ FOUND PERIOD: ' + gamePeriod + ' with selector: ' + foundSelector);
+                break;
+              }
+            }
+            
+            if (gamePeriod !== 'N/A') break;
+          }
+          
+          // If still not found, try a simple search for any 17-digit number
+          if (gamePeriod === 'N/A') {
+            console.log('🔍 SEARCHING FOR ANY 17-DIGIT NUMBER...');
+            var allElements = document.querySelectorAll('*');
+            for (var k = 0; k < allElements.length; k++) {
+              var el = allElements[k];
+              var text = el.innerText || el.textContent || '';
+              
+              if (text.match(/^\\d{17}\$/)) {
+                gamePeriod = text.trim();
+                console.log('✅ FOUND 17-DIGIT PERIOD: ' + gamePeriod);
+                console.log('Element: ' + el.tagName + ' class: ' + el.className);
+                break;
+              }
+            }
+          }
+          
+          var walletBalance = walletElement ? walletElement.innerText.trim() : 'N/A';
+          
+          var gameTimer = '30';
+          if (timerElement) {
+            var match = timerElement.textContent.match(/\\d+/);
+            if (match) {
+              gameTimer = parseInt(match[0]).toString().padStart(2, '0');
+            }
+          }
+          
+          console.log('FINAL RESULT - Period: ' + gamePeriod + ', Timer: ' + gameTimer + ', Wallet: ' + walletBalance);
+          
+          return JSON.stringify({
+            wallet: walletBalance,
+            timer: gameTimer,
+            period: gamePeriod
+          });
         } catch (e) {
-          console.error('Error in fetchWalletBalance:', e);
-        return 'N/A';
+          console.log('Error in optimized script:', e);
+          return JSON.stringify({
+            wallet: 'N/A',
+            timer: '30',
+            period: 'N/A'
+          });
         }
       })();
     """;
 
-      const fetchGameTimerScript = """
+      final result = await _webViewController
+          .runJavaScriptReturningResult(optimizedScript);
+
+      // The result is already a JSON string, just parse it directly
+      String jsonString = result.toString();
+
+      // Remove outer quotes if they exist (WebView sometimes adds them)
+      if (jsonString.startsWith('"') && jsonString.endsWith('"')) {
+        jsonString = jsonString.substring(1, jsonString.length - 1);
+        // Unescape any escaped quotes
+        jsonString = jsonString.replaceAll('\\"', '"');
+      }
+
+      final data = jsonDecode(jsonString);
+
+      if (mounted) {
+        setState(() {
+          if (data['wallet'] != 'N/A') {
+            _walletBalance = data['wallet'];
+            final balance = double.tryParse(data['wallet']
+                    .toString()
+                    .replaceAll('₹', '')
+                    .replaceAll(',', '')) ??
+                0.0;
+            bool shouldShowPredictionBar = balance > 100;
+
+            // If prediction bar is becoming visible for the first time, generate predictions
+            if (!_showPredictionBar &&
+                shouldShowPredictionBar &&
+                _next5Predictions.isEmpty) {
+              _initializePredictions();
+            }
+            _showPredictionBar = shouldShowPredictionBar;
+          }
+
+          if (_gameTimer != data['timer'] && data['timer'] != 'N/A') {
+            _updatePrediction();
+
+            // Track timer changes
+            final timerSeconds = int.tryParse(data['timer']) ?? 0;
+            _lastAnnouncedTimer = timerSeconds;
+
+            print(
+                "Timer changed to: ${data['timer']}, predictions updated: $_next5Predictions");
+          }
+          _gameTimer = data['timer'] != 'N/A' ? data['timer'] : "Not Found";
+
+          // Only update period if we get a valid one, otherwise keep the last known period
+          if (data['period'] != 'N/A' && data['period'].toString().isNotEmpty) {
+            String newPeriod = data['period'];
+
+            // Check if period has actually changed
+            if (_lastKnownGamePeriod.isNotEmpty &&
+                _lastKnownGamePeriod != newPeriod &&
+                !_isFirstPeriodLoad) {
+              print(
+                  "🔄 PERIOD CHANGED: '$_lastKnownGamePeriod' → '$newPeriod'");
+              print("🎯 Sliding predictions...");
+
+              // Slide predictions: remove top, add new at bottom
+              _slidePredictions();
+            }
+
+            String oldPeriod = _gamePeriod;
+            _gamePeriod = newPeriod;
+            _lastKnownGamePeriod = newPeriod;
+            _isFirstPeriodLoad = false;
+
+            print("🔍 Period updated from '$oldPeriod' to '$_gamePeriod'");
+          } else {
+            print("🔍 Period not updated - validation failed:");
+            print("   data['period']: '${data['period']}'");
+            print("   data['period'] != 'N/A': ${data['period'] != 'N/A'}");
+            print(
+                "   data['period'].toString().isNotEmpty: ${data['period'].toString().isNotEmpty}");
+            print("   Keeping previous: '$_gamePeriod'");
+          }
+
+          // Add debugging for period
+          print("🔍 Period debugging:");
+          print("   Raw period from JS: '${data['period']}'");
+          print("   Final _gamePeriod: '$_gamePeriod'");
+          print(
+              "   Is period valid number? ${RegExp(r'^\d+$').hasMatch(_gamePeriod)}");
+
+          // Test if we're getting any data at all
+          print("🔍 Data received from JavaScript:");
+          print("   Wallet: '${data['wallet']}'");
+          print("   Timer: '${data['timer']}'");
+          print("   Period: '${data['period']}'");
+        });
+      }
+    } catch (e) {
+      // Silent error handling
+    }
+  }
+
+  Future<void> _fetchBasicGameData() async {
+    try {
+      // Check if WebView is ready
+      if (!_isUrlLoaded || !mounted) return;
+
+      final basicScript = """
       (() => {
         try {
           const timerElement = document.querySelector('.TimeLeft__C-name');
+          
+          let gameTimer = '30';
           if (timerElement) {
-            // Extract the number from "WinGo XXsec" format
             const match = timerElement.textContent.match(/\\d+/);
             if (match) {
-              const seconds = parseInt(match[0]);
-              return seconds.toString().padStart(2, '0');
+              gameTimer = parseInt(match[0]).toString().padStart(2, '0');
             }
           }
-          return '30'; // Default to 30 seconds if not found
+          
+          let gamePeriod = 'N/A';
+          
+          // Try multiple selectors for period
+          const periodSelectors = [
+            'div[data-v-3cbad787=""].TimeLeft__C-id', // Exact selector provided by user
+            'div[data-v-3cbad787].TimeLeft__C-id',
+            '.TimeLeft__C-id',
+            '[class*="TimeLeft"][class*="id"]',
+            '[class*="period"]',
+            '[class*="Period"]',
+            '[class*="game"]',
+            '[class*="round"]',
+            '[class*="number"]',
+            '[class*="Number"]',
+            '.game-period',
+            '.period-number',
+            '.round-number'
+          ];
+          
+          for (let i = 0; i < periodSelectors.length; i++) {
+            const elements = document.querySelectorAll(periodSelectors[i]);
+            for (let j = 0; j < elements.length; j++) {
+              const text = elements[j].innerText || elements[j].textContent || '';
+              if (text.match(/^\\d{17}\$/)) {
+                gamePeriod = text.trim();
+                console.log('Basic script - Period found:', gamePeriod);
+                break;
+              }
+            }
+            if (gamePeriod !== 'N/A') break;
+          }
+          
+          // If still not found, try a simple search for any 17-digit number
+          if (gamePeriod === 'N/A') {
+            const allElements = document.querySelectorAll('*');
+            for (let k = 0; k < allElements.length; k++) {
+              const el = allElements[k];
+              const text = el.innerText || el.textContent || '';
+              
+              if (text.match(/^\\d{17}\$/)) {
+                gamePeriod = text.trim();
+                console.log('Basic script - Found 17-digit period:', gamePeriod);
+                break;
+              }
+            }
+          }
+          
+          return JSON.stringify({
+            timer: gameTimer,
+            period: gamePeriod
+          });
         } catch (e) {
-          console.error('Timer fetch error:', e);
-          return '30'; // Default value on error
+          console.log('Error in basic script:', e);
+          return JSON.stringify({
+            timer: '30',
+            period: 'N/A'
+          });
         }
       })();
     """;
 
-      const fetchGamePeriodScript = """
-      (() => {
-        const periodElement = document.querySelector('.TimeLeft__C-id');
-        if (periodElement) {
-          return periodElement.innerText;
-        }
-        return 'N/A';
-      })();
-    """;
+      final result =
+          await _webViewController.runJavaScriptReturningResult(basicScript);
+      final data = jsonDecode((result as String).replaceAll('"', ''));
 
-      final walletBalanceResult = await _webViewController
-          .runJavaScriptReturningResult(fetchWalletBalanceScript);
-      final gameTimerResult = await _webViewController
-          .runJavaScriptReturningResult(fetchGameTimerScript);
-      final gamePeriodResult = await _webViewController
-          .runJavaScriptReturningResult(fetchGamePeriodScript);
+      if (mounted) {
+        setState(() {
+          if (_gameTimer != data['timer'] && data['timer'] != 'N/A') {
+            _updatePrediction();
+          }
+          _gameTimer = data['timer'] != 'N/A' ? data['timer'] : "Not Found";
 
-      // Clean and parse results
-      String walletBalance =
-          (walletBalanceResult as String).replaceAll('"', '');
-      String activeGameTimer = (gameTimerResult as String).replaceAll('"', '');
-      String gamePeriod = (gamePeriodResult as String).replaceAll('"', '');
+          // Only update period if we get a valid one, otherwise keep the last known period
+          if (data['period'] != 'N/A' && data['period'].toString().isNotEmpty) {
+            String newPeriod = data['period'];
 
-      setState(() {
-        // Update wallet balance if it's valid
-        if (walletBalance != 'N/A') {
-          _walletBalance = walletBalance;
-          // Try to parse the balance and update _showPredictionBar
-          final balance = double.tryParse(
-                  walletBalance.replaceAll('₹', '').replaceAll(',', '')) ??
-              0.0;
-          _showPredictionBar = balance > 100;
-        }
+            // Check if period has actually changed
+            if (_lastKnownGamePeriod.isNotEmpty &&
+                _lastKnownGamePeriod != newPeriod &&
+                !_isFirstPeriodLoad) {
+              print(
+                  "🔄 PERIOD CHANGED: '$_lastKnownGamePeriod' → '$newPeriod'");
+              print("🎯 Sliding predictions...");
 
-        // Update game data only if there's a change
-        if (_gameTimer != activeGameTimer && activeGameTimer != "N/A") {
-          _updatePrediction();
-        }
-        _gameTimer = activeGameTimer != 'N/A' ? activeGameTimer : "Not Found";
-        _gamePeriod = gamePeriod != 'N/A' ? gamePeriod : "Not Found";
-      });
+              // Slide predictions: remove top, add new at bottom
+              _slidePredictions();
+            }
+
+            String oldPeriod = _gamePeriod;
+            _gamePeriod = newPeriod;
+            _lastKnownGamePeriod = newPeriod;
+            _isFirstPeriodLoad = false;
+
+            print("🔍 Period updated from '$oldPeriod' to '$_gamePeriod'");
+          } else {
+            print("🔍 Period not updated - validation failed:");
+            print("   data['period']: '${data['period']}'");
+            print("   data['period'] != 'N/A': ${data['period'] != 'N/A'}");
+            print(
+                "   data['period'].toString().isNotEmpty: ${data['period'].toString().isNotEmpty}");
+            print("   Keeping previous: '$_gamePeriod'");
+          }
+
+          // Add debugging for basic script period
+          print("🔍 Basic script period debugging:");
+          print("   Raw period from basic JS: '${data['period']}'");
+          print("   Final _gamePeriod: '$_gamePeriod'");
+        });
+      }
     } catch (e) {
-      print("Error fetching game data: $e");
+      // Silent error handling
     }
   }
 
   void _updatePrediction() {
+    print("🔄 _updatePrediction() called");
+
     final random = Random();
     final isBig = random.nextBool();
 
     _prediction = isBig ? "BIG" : "SMALL";
     _predictionColor = isBig ? Colors.yellow : Colors.lightBlue;
-    print("Prediction updated to: $_prediction"); // Debug
+
+    // Generate next 5 predictions
+    _next5Predictions =
+        List.generate(5, (index) => Random().nextBool() ? "Big" : "Small");
+
+    print("✅ Prediction updated:");
+    print("   _prediction: $_prediction");
+    print("   _next5Predictions: $_next5Predictions");
+    print("   _next5Predictions.length: ${_next5Predictions.length}");
+
+    // Force UI update
+    if (mounted) {
+      setState(() {});
+      print("✅ setState() called after prediction update");
+    }
   }
 
-  void _startPredictionUpdates() {
-    String lastResult = '';
-
-    _updateTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      if (_isPredictionRunning) {
-        try {
-          const fetchLatestDataScript = """
+  Future<void> _checkForNewResults() async {
+    try {
+      const fetchLatestDataScript = """
           (() => {
             try {
-              // Get the first row from the record body
               const firstRow = document.querySelector('.record-body .van-row');
               if (!firstRow) return 'NO_DATA';
               
-              // Extract number
               const numberElement = firstRow.querySelector('.record-body-num');
-              const number = numberElement ? numberElement.textContent.trim() : null;
-              
-              // Extract big/small
               const bigSmallElement = firstRow.querySelector('.van-col--5 span');
-              const bigSmall = bigSmallElement ? bigSmallElement.textContent.trim() : null;
-              
-              // Extract colors
               const colorDiv = firstRow.querySelector('.record-origin');
+          const periodElement = firstRow.querySelector('.van-col--10');
+          
               let colors = [];
               if (colorDiv) {
                 if (colorDiv.querySelector('.record-origin-I.red')) colors.push('red');
@@ -2042,185 +2674,603 @@ class _HackWingoAppState extends State<HackWingoApp> {
                 if (colorDiv.querySelector('.record-origin-I.violet')) colors.push('violet');
               }
               
-              // Extract period number
-              const periodElement = firstRow.querySelector('.van-col--10');
-              const period = periodElement ? periodElement.textContent.trim() : null;
-
-              return {
-                number: number,
-                bigSmall: bigSmall,
+          return JSON.stringify({
+            number: numberElement ? numberElement.textContent.trim() : null,
+            bigSmall: bigSmallElement ? bigSmallElement.textContent.trim() : null,
                 colors: colors.join(' '),
-                period: period
-              };
+            period: periodElement ? periodElement.textContent.trim() : null
+          });
             } catch (e) {
-              return 'ERROR: ' + e.message;
+          return 'ERROR';
             }
           })();
           """;
 
-          final result = await _webViewController
-              .runJavaScriptReturningResult(fetchLatestDataScript);
-          final resultStr = result as String;
+      final result = await _webViewController
+          .runJavaScriptReturningResult(fetchLatestDataScript);
+      final resultStr = (result as String).replaceAll('"', '');
 
-          if (resultStr.startsWith('"ERROR:') || resultStr == '"NO_DATA"') {
-            return;
-          }
+      if (resultStr == 'ERROR' || resultStr == 'NO_DATA') return;
 
-          final data = jsonDecode(resultStr);
-          if (data is Map) {
-            String currentNumber = data['number']?.toString() ?? '';
-            String currentColors = data['colors']?.toString() ?? '';
+      final data = jsonDecode(resultStr);
+      if (data is Map && data['number'] != null) {
+        String currentNumber = data['number'].toString();
+        String currentColors = data['colors']?.toString() ?? '';
 
-            if (currentNumber.isNotEmpty && currentNumber != lastResult) {
-              int resultNumber = int.tryParse(currentNumber) ?? -1;
-              if (resultNumber == -1) return;
+        if (currentNumber.isNotEmpty && currentNumber != _lastResult) {
+          int resultNumber = int.tryParse(currentNumber) ?? -1;
+          if (resultNumber == -1) return;
 
-              // Update recent history
-              _recentNumbers.insert(0, resultNumber);
-              _recentColors.insert(0, currentColors);
-
-              if (_recentNumbers.length > 10) {
-                _recentNumbers.removeLast();
-                _recentColors.removeLast();
-              }
-
-              bool isResultBig = resultNumber >= 5;
-              bool predictedBig = _prediction.toUpperCase() == 'BIG';
-
-              // Calculate reward based on prediction accuracy and confidence
-              double reward = isResultBig == predictedBig ? 1.0 : -1.0;
-              reward *= _lastConfidence;
-
-              // Update AI with result
-              PredictionState currentState = PredictionState(
-                  List.from(_recentNumbers), List.from(_recentColors));
-
-              // Create next state for better Q-learning
-              PredictionState? nextState;
-              if (_recentNumbers.length > 1) {
-                List<int> nextNumbers = List.from(_recentNumbers);
-                nextNumbers.removeAt(0); // Remove oldest
-                List<String> nextColors = List.from(_recentColors);
-                nextColors.removeAt(0); // Remove oldest
-                nextState = PredictionState(nextNumbers, nextColors);
-              }
-
-              _ai.learn(currentState, predictedBig, reward,
-                  nextState: nextState);
-
-              setState(() {
-                if (isResultBig == predictedBig) {
-                  _wins++;
-                  print("Correct prediction! Wins: $_wins");
-                } else {
-                  _losses;
-                  print("Wrong prediction. Losses: $_losses");
-                }
-
-                lastResult = currentNumber;
-                _generateNewPrediction();
-              });
-            }
-          }
-        } catch (e) {
-          print("Error in prediction update: $e");
+          _processGameResult(resultNumber, currentColors, currentNumber);
         }
       }
-    });
+    } catch (e) {
+      // Silent error handling
+    }
   }
 
-  void _generateNewPrediction() {
+  void _processGameResult(
+      int resultNumber, String currentColors, String currentNumber) {
+    // Update recent history with size limit
+    _recentNumbers.insert(0, resultNumber);
+    _recentColors.insert(0, currentColors);
+
+    if (_recentNumbers.length > 10) {
+      _recentNumbers.removeLast();
+      _recentColors.removeLast();
+    }
+
+    bool isResultBig = resultNumber >= 5;
+    bool predictedBig = _prediction.toUpperCase() == 'BIG';
+    double reward =
+        (isResultBig == predictedBig ? 1.0 : -1.0) * _lastConfidence;
+
+    // Efficient AI learning
+    PredictionState currentState =
+        PredictionState(List.from(_recentNumbers), List.from(_recentColors));
+    _ai.learn(currentState, predictedBig, reward);
+
+    // Track result for analytics
+
+    if (mounted) {
+      setState(() {
+        if (isResultBig == predictedBig) {
+          _wins++;
+        } else {
+          _losses++;
+        }
+        _lastResult = currentNumber;
+        _generateOptimizedPrediction();
+      });
+    }
+  }
+
+  void _generateOptimizedPrediction() {
     try {
       if (_recentNumbers.isEmpty) {
         _updateRandomPrediction();
         return;
       }
 
-      // Get AI prediction
+      // Optimized AI prediction
       PredictionState currentState =
           PredictionState(List.from(_recentNumbers), List.from(_recentColors));
       AIDecision aiDecision = _ai.predict(currentState);
 
-      // Get advanced predictor result
+      // Lightweight predictor result
       final predictor =
           AdvancedPredictor(_recentNumbers, _recentColors, _wins, _losses);
       final prediction = predictor.predict();
 
-      // Combine AI and advanced predictor with weighted average
-      double aiWeight = aiDecision.confidence;
-      double predictorWeight = prediction['confidence'];
-      double totalWeight = aiWeight + predictorWeight;
-
-      double combinedProbability;
-      if (totalWeight > 0) {
-        combinedProbability = (aiDecision.bigProbability * aiWeight +
-                prediction['probability'] * predictorWeight) /
-            totalWeight;
-      } else {
-        combinedProbability =
-            (aiDecision.bigProbability + prediction['probability']) / 2;
-      }
-
-      // Enhanced confidence calculation
+      // Simplified combination logic
+      double combinedProbability =
+          (aiDecision.bigProbability + prediction['probability']) / 2;
       double combinedConfidence =
           max(aiDecision.confidence, prediction['confidence']);
 
-      // Check if AI should be reset due to poor performance
-      if (_wins + _losses > 20) {
-        double winRate = _wins / (_wins + _losses);
-        if (winRate < 0.25) {
-          _ai.resetLearning();
-          print(
-              "AI reset due to poor performance (${(winRate * 100).toStringAsFixed(1)}% win rate)");
-        }
+      // Performance-based AI reset (less frequent)
+      if (_wins + _losses > 25 && _wins / (_wins + _losses) < 0.2) {
+        _ai.resetLearning();
       }
 
-      setState(() {
-        _prediction = combinedProbability > 0.5 ? "BIG" : "SMALL";
-        _predictionColor =
-            _prediction == "BIG" ? Colors.yellow : Colors.lightBlue;
-        _lastConfidence = combinedConfidence;
+      _prediction = combinedProbability > 0.5 ? "BIG" : "SMALL";
+      _predictionColor =
+          _prediction == "BIG" ? Colors.yellow : Colors.lightBlue;
+      _lastConfidence = combinedConfidence;
 
-        // Get AI learning statistics
-        Map<String, dynamic> aiStats = _ai.getLearningStats();
+      // Generate next 5 predictions with advanced AI analysis
+      _generateNext5Predictions();
 
-        print("""
-=== ENHANCED PREDICTION SYSTEM ===
-AI Decision: ${aiDecision.bigProbability > 0.5 ? 'BIG' : 'SMALL'} (${(aiDecision.bigProbability * 100).toStringAsFixed(1)}%)
-AI Confidence: ${(aiDecision.confidence * 100).toStringAsFixed(1)}%
-AI Reasoning: ${aiDecision.reasoning}
-
-Advanced Predictor: ${prediction['prediction']}
-Predictor Probability: ${(prediction['probability'] * 100).toStringAsFixed(1)}%
-Predictor Confidence: ${(prediction['confidence'] * 100).toStringAsFixed(1)}%
-Predictor Reasoning: ${prediction['reasoning']}
-
-FINAL PREDICTION: $_prediction
-Combined Probability: ${(combinedProbability * 100).toStringAsFixed(1)}%
-Combined Confidence: ${(combinedConfidence * 100).toStringAsFixed(1)}%
-
-AI Learning Stats:
-- Total States: ${aiStats['totalStates']}
-- Total Visits: ${aiStats['totalVisits']}
-- Exploration Rate: ${(aiStats['explorationRate'] * 100).toStringAsFixed(1)}%
-- Average Reward: ${aiStats['avgReward'].toStringAsFixed(3)}
-- Experience Size: ${aiStats['experienceSize']}
-
-Performance: $_wins wins, $_losses losses (${_wins + _losses > 0 ? ((_wins / (_wins + _losses)) * 100).toStringAsFixed(1) : 0}% win rate)
-==================================
-        """);
-      });
+      // Log prediction for analytics
     } catch (e) {
-      print("Error generating prediction: $e");
       _updateRandomPrediction();
     }
   }
 
+  Future<void> _generateNext5Predictions() async {
+    print(
+        "🧠 _generateNext5Predictions() called - Starting advanced AI analysis");
+
+    try {
+      // First, fetch complete game history for deep analysis
+      final historyData = await _fetchCompleteGameHistory();
+      print("📊 History data fetched: ${historyData.length} records");
+
+      if (historyData.isEmpty) {
+        print("⚠️ No history data available, using fallback predictions");
+        _generateFallbackPredictions();
+        return;
+      }
+
+      // Perform comprehensive analysis
+      final analysisResult = await _performAdvancedAnalysis(historyData);
+      print("🔬 Advanced analysis completed");
+
+      _next5Predictions.clear();
+
+      for (int i = 0; i < 5; i++) {
+        print("🎯 Generating prediction ${i + 1}/5");
+
+        // Multi-layer prediction system
+        final prediction =
+            await _generateSinglePrediction(i, historyData, analysisResult);
+        _next5Predictions.add(prediction);
+
+        print("   ✅ Prediction ${i + 1}: $prediction");
+      }
+
+      print("🎉 AI-generated predictions completed:");
+      print("   _next5Predictions: $_next5Predictions");
+    } catch (e) {
+      print("❌ Error in advanced AI prediction: $e");
+      _generateFallbackPredictions();
+    }
+
+    // Force UI update
+    if (mounted) {
+      setState(() {});
+      print("✅ setState() called after generating advanced predictions");
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchCompleteGameHistory() async {
+    try {
+      final historyScript = """
+      (() => {
+        try {
+          console.log('🔍 FETCHING COMPLETE GAME HISTORY...');
+          
+          var historyContainer = document.querySelector('div[data-v-e06f81fe].record-body');
+          if (!historyContainer) {
+            console.log('❌ History container not found');
+            return JSON.stringify([]);
+          }
+          
+          var historyRows = historyContainer.querySelectorAll('.van-row');
+          console.log('Found ' + historyRows.length + ' history rows');
+          
+          var historyData = [];
+          
+          for (var i = 0; i < Math.min(historyRows.length, 50); i++) { // Get last 50 records
+            var row = historyRows[i];
+            
+            // Get period number
+            var periodElement = row.querySelector('.van-col--10');
+            var period = periodElement ? periodElement.innerText.trim() : '';
+            
+            // Get result number
+            var numberElement = row.querySelector('.record-body-num');
+            var number = numberElement ? parseInt(numberElement.innerText.trim()) : -1;
+            
+            // Get big/small result
+            var bigSmallElement = row.querySelector('.van-col--5 span');
+            var bigSmall = bigSmallElement ? bigSmallElement.innerText.trim() : '';
+            
+            // Get colors
+            var colorDiv = row.querySelector('.record-origin');
+            var colors = [];
+            if (colorDiv) {
+              if (colorDiv.querySelector('.record-origin-I.red')) colors.push('red');
+              if (colorDiv.querySelector('.record-origin-I.green')) colors.push('green');
+              if (colorDiv.querySelector('.record-origin-I.violet')) colors.push('violet');
+            }
+            
+            if (period && number >= 0) {
+              historyData.push({
+                period: period,
+                number: number,
+                bigSmall: bigSmall,
+                colors: colors.join(' '),
+                isBig: number >= 5,
+                timestamp: Date.now() - (i * 30000) // Approximate timestamps
+              });
+            }
+          }
+          
+          console.log('✅ Collected ' + historyData.length + ' history records');
+          return JSON.stringify(historyData);
+          
+    } catch (e) {
+          console.log('Error fetching complete history:', e);
+          return JSON.stringify([]);
+        }
+      })();
+    """;
+
+      final result =
+          await _webViewController.runJavaScriptReturningResult(historyScript);
+
+      String jsonString = result.toString();
+      if (jsonString.startsWith('"') && jsonString.endsWith('"')) {
+        jsonString = jsonString.substring(1, jsonString.length - 1);
+        jsonString = jsonString.replaceAll('\\"', '"');
+      }
+
+      final List<dynamic> rawData = jsonDecode(jsonString);
+      return rawData.cast<Map<String, dynamic>>();
+    } catch (e) {
+      print("❌ Error fetching complete history: $e");
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> _performAdvancedAnalysis(
+      List<Map<String, dynamic>> history) async {
+    print("🔬 Performing advanced pattern analysis...");
+
+    final analysis = <String, dynamic>{};
+
+    // 1. Big/Small Pattern Analysis
+    final bigSmallPattern = _analyzeBigSmallPatterns(history);
+    analysis['bigSmallPattern'] = bigSmallPattern;
+    print("   📈 Big/Small pattern strength: ${bigSmallPattern['strength']}");
+
+    // 2. Number Frequency Analysis
+    final numberFrequency = _analyzeNumberFrequency(history);
+    analysis['numberFrequency'] = numberFrequency;
+    print("   🔢 Most frequent numbers: ${numberFrequency['hotNumbers']}");
+
+    // 3. Color Pattern Analysis
+    final colorPattern = _analyzeColorPatterns(history);
+    analysis['colorPattern'] = colorPattern;
+    print("   🎨 Dominant color pattern: ${colorPattern['dominantPattern']}");
+
+    // 4. Sequence Analysis
+    final sequencePattern = _analyzeSequencePatterns(history);
+    analysis['sequencePattern'] = sequencePattern;
+    print("   🔄 Sequence pattern detected: ${sequencePattern['type']}");
+
+    // 5. Time-based Analysis
+    final timePattern = _analyzeTimePatterns(history);
+    analysis['timePattern'] = timePattern;
+    print("   ⏰ Time-based trend: ${timePattern['trend']}");
+
+    // 6. Streak Analysis
+    final streakAnalysis = _analyzeStreaks(history);
+    analysis['streakAnalysis'] = streakAnalysis;
+    print("   📊 Current streak: ${streakAnalysis['currentStreak']}");
+
+    return analysis;
+  }
+
+  Map<String, dynamic> _analyzeBigSmallPatterns(
+      List<Map<String, dynamic>> history) {
+    if (history.isEmpty) return {'strength': 0.0, 'trend': 'neutral'};
+
+    final recentBigCount =
+        history.take(10).where((h) => h['isBig'] == true).length;
+    final overallBigCount = history.where((h) => h['isBig'] == true).length;
+
+    final recentBigRatio = recentBigCount / 10.0;
+    final overallBigRatio = overallBigCount / history.length;
+
+    final trendStrength = (recentBigRatio - overallBigRatio).abs();
+
+    String trend = 'neutral';
+    if (recentBigRatio > overallBigRatio + 0.2) {
+      trend = 'big_trending';
+    } else if (recentBigRatio < overallBigRatio - 0.2) {
+      trend = 'small_trending';
+    }
+
+    return {
+      'strength': trendStrength,
+      'trend': trend,
+      'recentBigRatio': recentBigRatio,
+      'overallBigRatio': overallBigRatio,
+    };
+  }
+
+  Map<String, dynamic> _analyzeNumberFrequency(
+      List<Map<String, dynamic>> history) {
+    final frequency = <int, int>{};
+
+    for (final record in history) {
+      final number = record['number'] as int;
+      frequency[number] = (frequency[number] ?? 0) + 1;
+    }
+
+    final sortedFreq = frequency.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final hotNumbers = sortedFreq.take(3).map((e) => e.key).toList();
+    final coldNumbers = sortedFreq.reversed.take(3).map((e) => e.key).toList();
+
+    return {
+      'hotNumbers': hotNumbers,
+      'coldNumbers': coldNumbers,
+      'frequency': frequency,
+    };
+  }
+
+  Map<String, dynamic> _analyzeColorPatterns(
+      List<Map<String, dynamic>> history) {
+    final colorFreq = <String, int>{};
+    final colorSequences = <String>[];
+
+    for (final record in history.take(20)) {
+      final colors = record['colors'] as String;
+      if (colors.isNotEmpty) {
+        colorFreq[colors] = (colorFreq[colors] ?? 0) + 1;
+        colorSequences.add(colors);
+      }
+    }
+
+    final dominantColor = colorFreq.entries.isEmpty
+        ? 'unknown'
+        : colorFreq.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+
+    return {
+      'dominantPattern': dominantColor,
+      'frequency': colorFreq,
+      'recentSequence': colorSequences.take(5).toList(),
+    };
+  }
+
+  Map<String, dynamic> _analyzeSequencePatterns(
+      List<Map<String, dynamic>> history) {
+    if (history.length < 5) return {'type': 'insufficient_data'};
+
+    final numbers = history.take(10).map((h) => h['number'] as int).toList();
+
+    // Check for arithmetic progression
+    bool isArithmetic = true;
+    if (numbers.length >= 3) {
+      final diff = numbers[1] - numbers[0];
+      for (int i = 2; i < numbers.length; i++) {
+        if (numbers[i] - numbers[i - 1] != diff) {
+          isArithmetic = false;
+          break;
+        }
+      }
+    }
+
+    // Check for alternating big/small pattern
+    bool isAlternating = true;
+    if (numbers.length >= 3) {
+      for (int i = 2; i < numbers.length; i++) {
+        final prev2Big = numbers[i - 2] >= 5;
+        final prev1Big = numbers[i - 1] >= 5;
+        final currentBig = numbers[i] >= 5;
+
+        if (prev2Big == currentBig) {
+          isAlternating = false;
+          break;
+        }
+      }
+    }
+
+    String patternType = 'random';
+    if (isArithmetic)
+      patternType = 'arithmetic';
+    else if (isAlternating) patternType = 'alternating';
+
+    return {
+      'type': patternType,
+      'confidence': isArithmetic || isAlternating ? 0.8 : 0.3,
+    };
+  }
+
+  Map<String, dynamic> _analyzeTimePatterns(
+      List<Map<String, dynamic>> history) {
+    if (history.length < 10) return {'trend': 'neutral'};
+
+    final recent5 = history.take(5).map((h) => h['isBig'] as bool).toList();
+    final previous5 =
+        history.skip(5).take(5).map((h) => h['isBig'] as bool).toList();
+
+    final recentBigCount = recent5.where((b) => b).length;
+    final previousBigCount = previous5.where((b) => b).length;
+
+    String trend = 'neutral';
+    if (recentBigCount > previousBigCount + 1) {
+      trend = 'increasing_big';
+    } else if (recentBigCount < previousBigCount - 1) {
+      trend = 'increasing_small';
+    }
+
+    return {
+      'trend': trend,
+      'recentBigCount': recentBigCount,
+      'previousBigCount': previousBigCount,
+    };
+  }
+
+  Map<String, dynamic> _analyzeStreaks(List<Map<String, dynamic>> history) {
+    if (history.isEmpty) return {'currentStreak': 0, 'streakType': 'none'};
+
+    final firstResult = history.first['isBig'] as bool;
+    int streakLength = 1;
+
+    for (int i = 1; i < history.length; i++) {
+      if ((history[i]['isBig'] as bool) == firstResult) {
+        streakLength++;
+      } else {
+        break;
+      }
+    }
+
+    return {
+      'currentStreak': streakLength,
+      'streakType': firstResult ? 'big' : 'small',
+      'shouldReverse': streakLength >= 4, // Suggest reversal after 4+ streak
+    };
+  }
+
+  Future<String> _generateSinglePrediction(int index,
+      List<Map<String, dynamic>> history, Map<String, dynamic> analysis) async {
+    print("🎯 Generating prediction ${index + 1} with advanced analysis");
+
+    double bigProbability = 0.5; // Base probability
+    final reasons = <String>[];
+
+    // 1. Apply Big/Small pattern analysis
+    final bigSmallPattern = analysis['bigSmallPattern'] as Map<String, dynamic>;
+    final patternStrength = bigSmallPattern['strength'] as double;
+    final trend = bigSmallPattern['trend'] as String;
+
+    if (patternStrength > 0.3) {
+      if (trend == 'big_trending') {
+        bigProbability += 0.2 * patternStrength;
+        reasons.add('Big trending pattern detected');
+      } else if (trend == 'small_trending') {
+        bigProbability -= 0.2 * patternStrength;
+        reasons.add('Small trending pattern detected');
+      }
+    }
+
+    // 2. Apply streak analysis with counter-trend logic
+    final streakAnalysis = analysis['streakAnalysis'] as Map<String, dynamic>;
+    final currentStreak = streakAnalysis['currentStreak'] as int;
+    final streakType = streakAnalysis['streakType'] as String;
+    final shouldReverse = streakAnalysis['shouldReverse'] as bool;
+
+    if (shouldReverse) {
+      if (streakType == 'big') {
+        bigProbability -= 0.3; // Counter-trend after long big streak
+        reasons.add('Counter-trend after ${currentStreak} big streak');
+      } else {
+        bigProbability += 0.3; // Counter-trend after long small streak
+        reasons.add('Counter-trend after ${currentStreak} small streak');
+      }
+    }
+
+    // 3. Apply sequence pattern analysis
+    final sequencePattern = analysis['sequencePattern'] as Map<String, dynamic>;
+    final patternType = sequencePattern['type'] as String;
+    final confidence = sequencePattern['confidence'] as double;
+
+    if (patternType == 'alternating' && confidence > 0.7) {
+      final lastResult =
+          history.isNotEmpty ? history.first['isBig'] as bool : false;
+      if (lastResult) {
+        bigProbability -= 0.25; // Next should be small in alternating pattern
+        reasons.add('Alternating pattern suggests small');
+      } else {
+        bigProbability += 0.25; // Next should be big in alternating pattern
+        reasons.add('Alternating pattern suggests big');
+      }
+    }
+
+    // 4. Apply number frequency analysis
+    final numberFreq = analysis['numberFrequency'] as Map<String, dynamic>;
+    final hotNumbers = numberFreq['hotNumbers'] as List<int>;
+    final coldNumbers = numberFreq['coldNumbers'] as List<int>;
+
+    final hotBigCount = hotNumbers.where((n) => n >= 5).length;
+    final coldBigCount = coldNumbers.where((n) => n >= 5).length;
+
+    if (hotBigCount > hotNumbers.length / 2) {
+      bigProbability += 0.15;
+      reasons.add('Hot numbers favor big');
+    } else if (coldBigCount > coldNumbers.length / 2) {
+      bigProbability -= 0.1;
+      reasons.add('Cold numbers due for comeback');
+    }
+
+    // 5. Apply time-based analysis
+    final timePattern = analysis['timePattern'] as Map<String, dynamic>;
+    final timeTrend = timePattern['trend'] as String;
+
+    if (timeTrend == 'increasing_big') {
+      bigProbability += 0.1;
+      reasons.add('Recent time trend favors big');
+    } else if (timeTrend == 'increasing_small') {
+      bigProbability -= 0.1;
+      reasons.add('Recent time trend favors small');
+    }
+
+    // 6. Apply position-based adjustment (each prediction in sequence)
+    final positionAdjustment = (index * 0.05) * (Random().nextBool() ? 1 : -1);
+    bigProbability += positionAdjustment;
+
+    // 7. Add slight randomization to avoid predictable patterns
+    final randomFactor = (Random().nextDouble() - 0.5) * 0.1;
+    bigProbability += randomFactor;
+
+    // Clamp probability
+    bigProbability = bigProbability.clamp(0.1, 0.9);
+
+    final prediction = bigProbability > 0.5 ? "Big" : "Small";
+
+    print("   🧮 Analysis for prediction ${index + 1}:");
+    print("      Final probability: ${bigProbability.toStringAsFixed(3)}");
+    print("      Prediction: $prediction");
+    print("      Reasons: ${reasons.join(', ')}");
+
+    return prediction;
+  }
+
+  void _generateFallbackPredictions() {
+    print("🎲 Generating fallback predictions");
+    _next5Predictions =
+        List.generate(5, (index) => Random().nextBool() ? "Big" : "Small");
+  }
+
+  int _generateSimulatedResult(double bigProbability) {
+    final random = Random();
+    if (random.nextDouble() < bigProbability) {
+      // Generate BIG number (5-9)
+      return 5 + random.nextInt(5);
+    } else {
+      // Generate SMALL number (0-4)
+      return random.nextInt(5);
+    }
+  }
+
+  String _generateSimulatedColor(int number) {
+    // Simple color logic based on number
+    if (number == 0 || number == 5) {
+      return Random().nextBool() ? "red violet" : "green violet";
+    } else if ([1, 3, 7, 9].contains(number)) {
+      return "green";
+    } else if ([2, 4, 6, 8].contains(number)) {
+      return "red";
+    }
+    return "violet";
+  }
+
   void _updateRandomPrediction() {
+    print("🎲 _updateRandomPrediction() called");
+
     final random = Random();
     final isBig = random.nextBool();
     _prediction = isBig ? "BIG" : "SMALL";
     _predictionColor = isBig ? Colors.yellow : Colors.lightBlue;
+
+    // Generate random next 5 predictions
+    _next5Predictions =
+        List.generate(5, (index) => Random().nextBool() ? "Big" : "Small");
+
+    print("✅ Random predictions generated:");
+    print("   _prediction: $_prediction");
+    print("   _next5Predictions: $_next5Predictions");
+
+    // Force UI update
+    if (mounted) {
+      setState(() {});
+      print("✅ setState() called after random prediction update");
+    }
   }
 
   Future<void> _checkAppStatus() async {
@@ -2279,20 +3329,311 @@ Performance: $_wins wins, $_losses losses (${_wins + _losses > 0 ? ((_wins / (_w
     }
   }
 
-  void _showHackerEffectPopup() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      showDialog(
-        context: context,
-        barrierDismissible: false, // Prevent dismissal
-        builder: (BuildContext context) {
-          return HackerEffectPopup(
-            onComplete: () {
-              Navigator.pop(context); // Close the popup after effect finishes
-            },
-          );
-        },
-      );
-    });
+  Future<void> _testPeriodFetching() async {
+    try {
+      final testScript = """
+      (() => {
+        try {
+          console.log('🔍 TESTING PERIOD FETCHING...');
+          
+          // Test the main selector
+          var periodElement = document.querySelector('div[data-v-3cbad787=""].TimeLeft__C-id');
+          console.log('Exact selector result:', periodElement);
+          
+          if (periodElement) {
+            console.log('Period found with exact selector:', periodElement.innerText);
+            console.log('Element class:', periodElement.className);
+          } else {
+            console.log('Exact selector failed, trying alternatives...');
+            
+            // Try alternative selectors
+            var alternatives = [
+              'div[data-v-3cbad787].TimeLeft__C-id',
+              '.TimeLeft__C-id',
+              '[class*="TimeLeft"]',
+              '[class*="period"]',
+              '[class*="Period"]',
+              '[class*="game"]',
+              '[class*="round"]',
+              '[class*="number"]',
+              '[class*="Number"]'
+            ];
+            
+            for (var i = 0; i < alternatives.length; i++) {
+              var el = document.querySelector(alternatives[i]);
+              if (el) {
+                console.log('Found with selector ' + alternatives[i] + ':', el.innerText);
+                break;
+              }
+            }
+          }
+          
+          // Debug: Show all elements with 17-digit numbers
+          console.log('🔍 ALL ELEMENTS WITH 17-DIGIT NUMBERS:');
+          var allElements = document.querySelectorAll('*');
+          for (var k = 0; k < allElements.length; k++) {
+            var el = allElements[k];
+            var text = el.innerText || el.textContent || '';
+            if (text.match(/^\\d{17}\$/)) {
+              console.log('17-digit number found:', text, 'in element:', el.tagName, 'class:', el.className);
+              console.log('Parent text:', el.parentElement ? el.parentElement.innerText : 'No parent');
+            }
+          }
+          
+          return 'TEST_COMPLETE';
+        } catch (e) {
+          console.log('Test error:', e);
+          return 'TEST_ERROR';
+        }
+      })();
+    """;
+
+      final result =
+          await _webViewController.runJavaScriptReturningResult(testScript);
+      print("🔍 PERIOD TEST RESULT: $result");
+    } catch (e) {
+      print("❌ Period test error: $e");
+    }
+  }
+
+  Future<void> _fetchCurrentPeriodFromHistory() async {
+    try {
+      if (!_isUrlLoaded || !mounted) return;
+
+      final historyScript = """
+      (() => {
+        try {
+          console.log('🔍 FETCHING CURRENT PERIOD FROM HISTORY...');
+          
+          // Look for the history records in the exact structure provided
+          var historyContainer = document.querySelector('div[data-v-e06f81fe].record-body');
+          if (!historyContainer) {
+            console.log('❌ History container not found');
+            return JSON.stringify({ currentPeriod: 'N/A', nextPeriod: 'N/A' });
+          }
+          
+          console.log('✅ History container found');
+          
+          // Get all period numbers from history (first column of each row)
+          var periodElements = historyContainer.querySelectorAll('.van-col--10');
+          console.log('Found ' + periodElements.length + ' period elements');
+          
+          if (periodElements.length === 0) {
+            console.log('❌ No period elements found');
+            return JSON.stringify({ currentPeriod: 'N/A', nextPeriod: 'N/A' });
+          }
+          
+          // Get the latest (first) period number
+          var latestPeriod = periodElements[0].innerText.trim();
+          console.log('Latest period from history: ' + latestPeriod);
+          
+          // Validate it's a 17-digit number
+          if (!latestPeriod.match(/^\\d{17}\$/)) {
+            console.log('❌ Latest period is not 17 digits: ' + latestPeriod);
+            return JSON.stringify({ currentPeriod: 'N/A', nextPeriod: 'N/A' });
+          }
+          
+          // Calculate the next period number (increment by 1)
+          // Use BigInt for large 17-digit numbers to avoid precision loss
+          var latestPeriodBigInt = BigInt(latestPeriod);
+          var nextPeriodBigInt = latestPeriodBigInt + 1n;
+          var nextPeriod = nextPeriodBigInt.toString();
+          
+          console.log('✅ Current period: ' + latestPeriod);
+          console.log('✅ Next period: ' + nextPeriod);
+          
+          return JSON.stringify({
+            currentPeriod: latestPeriod,
+            nextPeriod: nextPeriod,
+            historyCount: periodElements.length
+          });
+          
+        } catch (e) {
+          console.log('Error fetching period from history:', e);
+          return JSON.stringify({ currentPeriod: 'N/A', nextPeriod: 'N/A' });
+        }
+      })();
+    """;
+
+      final result =
+          await _webViewController.runJavaScriptReturningResult(historyScript);
+
+      print("🔍 Raw JavaScript result: '$result'");
+      print("🔍 Result type: ${result.runtimeType}");
+
+      // The result is already a JSON string, just parse it directly
+      String jsonString = result.toString();
+
+      // Remove outer quotes if they exist (WebView sometimes adds them)
+      if (jsonString.startsWith('"') && jsonString.endsWith('"')) {
+        jsonString = jsonString.substring(1, jsonString.length - 1);
+        // Unescape any escaped quotes
+        jsonString = jsonString.replaceAll('\\"', '"');
+      }
+
+      print("🔍 Cleaned JSON string: '$jsonString'");
+
+      final data = jsonDecode(jsonString);
+
+      if (mounted && data['nextPeriod'] != 'N/A') {
+        setState(() {
+          String oldPeriod = _gamePeriod;
+          _gamePeriod = data['nextPeriod']; // Use the next period as current
+          print(
+              "🔍 Period updated from history: '$oldPeriod' → '$_gamePeriod'");
+          print("   Latest completed period: ${data['currentPeriod']}");
+          print("   Current/Next period: ${data['nextPeriod']}");
+          print("   History records found: ${data['historyCount']}");
+        });
+      } else {
+        print("🔍 Could not fetch period from history:");
+        print("   Current period: ${data['currentPeriod']}");
+        print("   Next period: ${data['nextPeriod']}");
+      }
+    } catch (e) {
+      print("❌ Error fetching period from history: $e");
+    }
+  }
+
+  Future<void> _slidePredictions() async {
+    print("🎯 _slidePredictions() called");
+
+    if (_next5Predictions.isEmpty) {
+      print("⚠️ No predictions to slide, generating new ones");
+      await _generateNext5Predictions();
+      return;
+    }
+
+    try {
+      // Remove the top prediction (it was for the previous period)
+      if (_next5Predictions.isNotEmpty) {
+        String removedPrediction = _next5Predictions.removeAt(0);
+        print("   🔺 Removed top prediction: '$removedPrediction'");
+      }
+
+      // Generate one new prediction for the bottom
+      String newPrediction = await _generateSingleNewPrediction();
+      _next5Predictions.add(newPrediction);
+      print("   🔻 Added new bottom prediction: '$newPrediction'");
+
+      print("✅ Predictions slided:");
+      print("   Updated _next5Predictions: $_next5Predictions");
+      print("   Total predictions: ${_next5Predictions.length}");
+
+      // Force UI update to show the sliding effect
+      if (mounted) {
+        setState(() {});
+        print("✅ setState() called after sliding predictions");
+      }
+    } catch (e) {
+      print("❌ Error sliding predictions: $e");
+      // If sliding fails, regenerate all predictions
+      await _generateNext5Predictions();
+    }
+  }
+
+  Future<String> _generateSingleNewPrediction() async {
+    print("🎯 Generating single new prediction for sliding");
+
+    try {
+      // Fetch latest history for the new prediction
+      final historyData = await _fetchCompleteGameHistory();
+
+      if (historyData.isEmpty) {
+        print("⚠️ No history for new prediction, using random");
+        return Random().nextBool() ? "Big" : "Small";
+      }
+
+      // Perform quick analysis for the new prediction
+      final quickAnalysis = await _performQuickAnalysis(historyData);
+
+      // Generate prediction for the 5th position (bottom of list)
+      final newPrediction =
+          await _generateSinglePrediction(4, historyData, quickAnalysis);
+
+      print("✅ Generated new sliding prediction: '$newPrediction'");
+      return newPrediction;
+    } catch (e) {
+      print("❌ Error generating new prediction: $e");
+      return Random().nextBool() ? "Big" : "Small";
+    }
+  }
+
+  Future<Map<String, dynamic>> _performQuickAnalysis(
+      List<Map<String, dynamic>> history) async {
+    print("⚡ Performing quick analysis for sliding prediction");
+
+    // Simplified analysis for faster sliding
+    final analysis = <String, dynamic>{};
+
+    // Quick big/small analysis
+    final recentBigCount =
+        history.take(5).where((h) => h['isBig'] == true).length;
+    final recentBigRatio = recentBigCount / 5.0;
+
+    analysis['bigSmallPattern'] = {
+      'strength': (recentBigRatio - 0.5).abs(),
+      'trend': recentBigRatio > 0.6
+          ? 'big_trending'
+          : recentBigRatio < 0.4
+              ? 'small_trending'
+              : 'neutral',
+      'recentBigRatio': recentBigRatio,
+      'overallBigRatio': 0.5
+    };
+
+    // Quick streak analysis
+    if (history.isNotEmpty) {
+      final firstResult = history.first['isBig'] as bool;
+      int streakLength = 1;
+
+      for (int i = 1; i < history.length && i < 5; i++) {
+        if ((history[i]['isBig'] as bool) == firstResult) {
+          streakLength++;
+        } else {
+          break;
+        }
+      }
+
+      analysis['streakAnalysis'] = {
+        'currentStreak': streakLength,
+        'streakType': firstResult ? 'big' : 'small',
+        'shouldReverse': streakLength >= 3
+      };
+    } else {
+      analysis['streakAnalysis'] = {
+        'currentStreak': 0,
+        'streakType': 'none',
+        'shouldReverse': false
+      };
+    }
+
+    // Quick number frequency
+    final frequency = <int, int>{};
+    for (final record in history.take(10)) {
+      final number = record['number'] as int;
+      frequency[number] = (frequency[number] ?? 0) + 1;
+    }
+
+    final sortedFreq = frequency.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    analysis['numberFrequency'] = {
+      'hotNumbers': sortedFreq.take(3).map((e) => e.key).toList(),
+      'coldNumbers': sortedFreq.reversed.take(3).map((e) => e.key).toList(),
+      'frequency': frequency,
+    };
+
+    // Quick sequence pattern
+    analysis['sequencePattern'] = {'type': 'random', 'confidence': 0.3};
+
+    // Quick time pattern
+    analysis['timePattern'] = {'trend': 'neutral'};
+
+    // Quick color pattern
+    analysis['colorPattern'] = {'dominantPattern': 'unknown'};
+
+    return analysis;
   }
 }
 

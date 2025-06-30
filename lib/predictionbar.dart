@@ -7,8 +7,129 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'dart:math';
 
 void main() => runApp(const PredictionApp());
+
+class AnimatedGradientBorder extends StatefulWidget {
+  final Widget child;
+  final double borderWidth;
+  final double borderRadius;
+
+  const AnimatedGradientBorder({
+    Key? key,
+    required this.child,
+    this.borderWidth = 1.5, // Thinner border for smoother appearance
+    this.borderRadius = 12.0,
+  }) : super(key: key);
+
+  @override
+  _AnimatedGradientBorderState createState() => _AnimatedGradientBorderState();
+}
+
+class _AnimatedGradientBorderState extends State<AnimatedGradientBorder>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(seconds: 3), // Faster pulsing effect
+      vsync: this,
+    );
+
+    _animation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut, // Smooth pulsing curve
+    ));
+
+    // Start animation with a delay for stability
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _controller.repeat(
+            reverse: true); // Reverse animation for breathing effect
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _animation,
+      builder: (context, child) {
+        return RepaintBoundary(
+          // Isolate repaints for better performance
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(widget.borderRadius),
+              gradient: SweepGradient(
+                center: Alignment.center,
+                startAngle:
+                    _animation.value * 6.28318, // 2 * pi for smooth rotation
+                colors: [
+                  Color(0xFF00FF00)
+                      .withOpacity(0.4 + (_animation.value * 0.6)), // Green
+                  Color(0xFF8000FF)
+                      .withOpacity(0.4 + (_animation.value * 0.6)), // Purple
+                  Color(0xFFFF00FF)
+                      .withOpacity(0.4 + (_animation.value * 0.6)), // Pink
+                  Color(0xFFFF0000)
+                      .withOpacity(0.4 + (_animation.value * 0.6)), // Red
+                  Color(0xFF0000FF)
+                      .withOpacity(0.4 + (_animation.value * 0.6)), // Blue
+                  Color(0xFF00FF00).withOpacity(
+                      0.4 + (_animation.value * 0.6)), // Green (loop)
+                ],
+                stops: const [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color:
+                      Colors.green.withOpacity(0.2 + (_animation.value * 0.4)),
+                  blurRadius: 6 + (_animation.value * 8),
+                  spreadRadius: _animation.value * 3,
+                ),
+                BoxShadow(
+                  color: Colors.purple
+                      .withOpacity(0.15 + (_animation.value * 0.3)),
+                  blurRadius: 8 + (_animation.value * 10),
+                  spreadRadius: _animation.value * 2,
+                ),
+                BoxShadow(
+                  color:
+                      Colors.pink.withOpacity(0.1 + (_animation.value * 0.25)),
+                  blurRadius: 4 + (_animation.value * 6),
+                  spreadRadius: _animation.value * 1.5,
+                ),
+              ],
+            ),
+            child: Container(
+              margin: EdgeInsets.all(widget.borderWidth),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(
+                    widget.borderRadius - widget.borderWidth),
+                color: const Color(0xFF1a1b20),
+              ),
+              child: widget.child,
+            ),
+          ),
+        );
+      },
+      child: widget.child, // Cache child widget
+    );
+  }
+}
 
 class PredictionApp extends StatelessWidget {
   const PredictionApp({Key? key}) : super(key: key);
@@ -31,7 +152,7 @@ class _PredictionScreenState extends State<PredictionScreen>
     with SingleTickerProviderStateMixin {
   late Timer _timer;
   String _prediction = "Big";
-  int _periodNumber = 1;
+  int _periodNumber = 0;
   int _remainingTime = 10;
   bool _isRunning = false;
   bool _hasValidDeposit = false;
@@ -319,7 +440,7 @@ class _PredictionScreenState extends State<PredictionScreen>
                 ),
               ),
             ] else if (!_isMandatoryStarted) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               Text(
                 '⚠️ Press START in top bar to begin',
                 style: GoogleFonts.poppins(
@@ -417,7 +538,7 @@ class PredictionAppBar extends StatelessWidget implements PreferredSizeWidget {
                   ),
                   child: Center(
                     child: Text(
-                      "💸JALWA NUMBER H@CK💸",
+                      "💸 NUMBER HACK V3.1💸",
                       style: GoogleFonts.poppins(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -426,7 +547,7 @@ class PredictionAppBar extends StatelessWidget implements PreferredSizeWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 7),
                 // Game info with modern cards
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -493,7 +614,7 @@ class PredictionAppBar extends StatelessWidget implements PreferredSizeWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 // Stats bar
                 Container(
                   padding:
@@ -529,7 +650,7 @@ class PredictionAppBar extends StatelessWidget implements PreferredSizeWidget {
                     ],
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 // Developer signature at bottom (centered)
                 Container(
                   alignment: Alignment.center,
@@ -570,7 +691,7 @@ class PredictionAppBar extends StatelessWidget implements PreferredSizeWidget {
       child: Column(
         children: [
           Icon(icon, color: Colors.white70, size: 20),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             label,
             style: const TextStyle(
@@ -600,7 +721,7 @@ class PredictionAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 
   @override
-  Size get preferredSize => const Size.fromHeight(200);
+  Size get preferredSize => const Size.fromHeight(240);
 }
 
 class AnimatedStartButton extends StatelessWidget {
@@ -630,7 +751,7 @@ class AnimatedStartButton extends StatelessWidget {
         scale: scaleAnimation,
         child: Container(
           width: 200,
-          height: 200,
+          height: 240,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: LinearGradient(
@@ -674,7 +795,7 @@ class AnimatedStartButton extends StatelessWidget {
                         size: 64,
                         color: Colors.white.withOpacity(isEnabled ? 1.0 : 0.7),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Text(
                         isEnabled ? (isRunning ? "STOP" : "START") : "LOCKED",
                         style: GoogleFonts.poppins(
@@ -696,383 +817,267 @@ class AnimatedStartButton extends StatelessWidget {
   }
 }
 
-class PredictionWindow extends StatefulWidget {
+class AdvancedPredictionBar extends StatelessWidget
+    implements PreferredSizeWidget {
   final String gameTimer;
   final String wins;
   final String losses;
-  final String prediction;
+  final String currentPrediction;
   final String periodNumber;
-  final bool isRunning;
-  final VoidCallback onStart;
-  final VoidCallback onStop;
-  final VoidCallback onHide;
+  final List<String> next5Predictions;
+  final VoidCallback onMandatoryStart;
+  final bool isMandatoryStarted;
 
-  const PredictionWindow({
+  const AdvancedPredictionBar({
     Key? key,
     required this.gameTimer,
     required this.wins,
     required this.losses,
-    required this.prediction,
+    required this.currentPrediction,
     required this.periodNumber,
-    required this.isRunning,
-    required this.onStart,
-    required this.onStop,
-    required this.onHide,
+    required this.next5Predictions,
+    required this.onMandatoryStart,
+    required this.isMandatoryStarted,
   }) : super(key: key);
 
   @override
-  _PredictionWindowState createState() => _PredictionWindowState();
-}
-
-class _PredictionWindowState extends State<PredictionWindow> {
-  int _getPredictedNumber(String prediction, String periodNumber) {
-    String digits = periodNumber.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.isEmpty) return 0;
-    String lastThreeDigits = digits.length > 3
-        ? digits.substring(digits.length - 3)
-        : digits.padLeft(3, '0');
-
-    final int seed = int.parse(lastThreeDigits[lastThreeDigits.length - 1]);
-    final bool isBig = prediction.toLowerCase() == 'big';
-
-    if (isBig) {
-      return ((seed * 7 + 3) % 5) + 5;
-    } else {
-      return (seed * 3 + 1) % 5;
-    }
-  }
-
-  String _formatPeriodNumber(String periodNumber) {
-    String digits = periodNumber.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.length > 4) {
-      return '...${digits.substring(digits.length - 4)}';
-    }
-    return digits;
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final bool isBig = widget.prediction.toLowerCase() == 'big';
-    final predictedNumber =
-        _getPredictedNumber(widget.prediction, widget.periodNumber);
+    print("🎨 AdvancedPredictionBar.build() called");
+    print("   next5Predictions: $next5Predictions");
+    print("   next5Predictions.length: ${next5Predictions.length}");
+    print("   gameTimer: $gameTimer");
+    print("   periodNumber: $periodNumber");
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          width: 280,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.9),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-                color: Colors.greenAccent.withOpacity(0.6), width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.greenAccent.withOpacity(0.2),
-                blurRadius: 15,
-                spreadRadius: 2,
-              ),
-              BoxShadow(
-                color: Colors.black.withOpacity(0.8),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Period and Hack Name
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Period: ${_formatPeriodNumber(widget.periodNumber)}',
-                    style: GoogleFonts.orbitron(
-                      color: Colors.greenAccent,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.greenAccent.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                          color: Colors.greenAccent.withOpacity(0.3)),
-                    ),
-                    child: Text(
-                      'AI Hack',
-                      style: GoogleFonts.chakraPetch(
-                        color: Colors.greenAccent,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              Divider(color: Colors.greenAccent.withOpacity(0.3), height: 16),
-              // Predictions
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildPredictionBox(
-                      'AI NUMBER',
-                      widget.prediction.toUpperCase(),
-                      Colors.greenAccent,
-                      isBig),
-                  _buildPredictionBox('NUMBER', predictedNumber.toString(),
-                      Colors.greenAccent, isBig),
-                ],
-              ),
-              Divider(color: Colors.greenAccent.withOpacity(0.3), height: 16),
-              // Stats
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.5),
-                  borderRadius: BorderRadius.circular(8),
-                  border:
-                      Border.all(color: Colors.greenAccent.withOpacity(0.2)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      "Win: ${widget.wins}",
-                      style: TextStyle(
-                        color: Colors.greenAccent,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Text(
-                      "Time: ${widget.gameTimer}",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Text(
-                      "Loss: ${widget.losses}",
-                      style: TextStyle(
-                        color: Colors.redAccent,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              // Buttons
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _buildButton(
-                      widget.isRunning ? 'STOP' : 'START',
-                      widget.isRunning ? widget.onStop : widget.onStart,
-                      widget.isRunning ? Colors.redAccent : Colors.greenAccent),
-                  _buildButton('HIDE', widget.onHide, Colors.grey.shade600),
-                ],
-              ),
-            ],
-          ),
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(260),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1a1b20),
         ),
-      ),
-    );
-  }
-
-  Widget _buildPredictionBox(
-      String title, String value, Color titleColor, bool isBig) {
-    Color valueColor;
-    if (title == 'AI NUMBER') {
-      valueColor = isBig ? Colors.yellow : Colors.lightBlue;
-    } else {
-      valueColor = Colors.greenAccent;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.6),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.chakraPetch(
-              color: titleColor,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: GoogleFonts.orbitron(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: valueColor,
-              shadows: [
-                Shadow(
-                  blurRadius: 8.0,
-                  color: valueColor.withOpacity(0.5),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              children: [
+                // Enhanced Header with Animated Gradient Border
+                AnimatedGradientBorder(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.purple.shade800.withOpacity(0.3),
+                          Colors.blue.shade800.withOpacity(0.3),
+                          Colors.green.shade800.withOpacity(0.3),
+                        ],
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.greenAccent.withOpacity(0.2),
+                          blurRadius: 8,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.psychology,
+                            color: Colors.greenAccent, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          "🚀NEXT AI PREDICTIONS🎯",
+                          style: GoogleFonts.orbitron(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 1.5,
+                            shadows: [
+                              Shadow(
+                                color: Colors.greenAccent.withOpacity(0.5),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(Icons.trending_up,
+                            color: Colors.greenAccent, size: 18),
+                      ],
+                    ),
+                  ),
                 ),
-                Shadow(
-                  blurRadius: 15.0,
-                  color: valueColor.withOpacity(0.3),
+                const SizedBox(height: 5),
+
+                // Simple List Design
+                Expanded(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    child: ListView.builder(
+                      itemCount: 5,
+                      padding: EdgeInsets.zero,
+                      physics:
+                          const NeverScrollableScrollPhysics(), // Disable scrolling for better performance
+                      shrinkWrap: true, // Optimize layout
+                      itemBuilder: (context, index) {
+                        final prediction = index < next5Predictions.length
+                            ? next5Predictions[index]
+                            : "Loading...";
+
+                        final nextPeriodFull =
+                            _getNextPeriodNumber(periodNumber, index + 1);
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Row(
+                            children: [
+                              // Period text
+                              Text(
+                                "Period",
+                                style: GoogleFonts.roboto(
+                                  fontSize: 14,
+                                  color: Colors.white70,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                "-",
+                                style: GoogleFonts.roboto(
+                                  fontSize: 14,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Period number
+                              Expanded(
+                                child: Text(
+                                  nextPeriodFull == "???"
+                                      ? "Loading..."
+                                      : nextPeriodFull,
+                                  style: GoogleFonts.robotoMono(
+                                    fontSize: 15,
+                                    color: nextPeriodFull == "???"
+                                        ? Colors.grey
+                                        : Colors.greenAccent,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              // Prediction
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: prediction == "Loading..."
+                                      ? Colors.grey.withOpacity(0.2)
+                                      : prediction.toLowerCase() == "big"
+                                          ? Colors.green.withOpacity(0.2)
+                                          : Colors.red.withOpacity(0.2),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: prediction == "Loading..."
+                                        ? Colors.grey.withOpacity(0.4)
+                                        : prediction.toLowerCase() == "big"
+                                            ? Colors.green.withOpacity(0.6)
+                                            : Colors.red.withOpacity(0.6),
+                                    width: 1,
+                                  ),
+                                ),
+                                child: Text(
+                                  prediction == "Loading..."
+                                      ? "Loading..."
+                                      : prediction.toUpperCase(),
+                                  style: GoogleFonts.orbitron(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: prediction == "Loading..."
+                                        ? Colors.grey
+                                        : prediction.toLowerCase() == "big"
+                                            ? Colors.green
+                                            : Colors.red,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+
+                // Compact Timer
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.white.withOpacity(0.2)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.access_time, color: Colors.white70, size: 14),
+                      const SizedBox(width: 3),
+                      Text(
+                        "Next: ${gameTimer}s",
+                        style: GoogleFonts.roboto(
+                          fontSize: 12,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildButton(String text, VoidCallback onPressed, Color color) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        gradient: LinearGradient(
-          colors: [
-            color.withOpacity(0.8),
-            color.withOpacity(0.6),
-          ],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          side: BorderSide(color: color.withOpacity(0.5), width: 1),
-        ),
-        child: Text(
-          text,
-          style: GoogleFonts.orbitron(
-            color: Colors.black,
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
-            letterSpacing: 1,
-          ),
         ),
       ),
     );
   }
-}
 
-class AdvancedMatrixEffect extends StatefulWidget {
-  final double height;
-  final double width;
-
-  const AdvancedMatrixEffect(
-      {required this.height, required this.width, Key? key})
-      : super(key: key);
-
-  @override
-  _AdvancedMatrixEffectState createState() => _AdvancedMatrixEffectState();
-}
-
-class _AdvancedMatrixEffectState extends State<AdvancedMatrixEffect>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late List<List<String>> _matrix;
-  late int rows, columns;
-
-  @override
-  void initState() {
-    super.initState();
-
-    rows = (widget.height / 20).ceil();
-    columns = (widget.width / 12).ceil();
-    _matrix = List.generate(
-        rows, (_) => List.generate(columns, (_) => _randomChar()));
-
-    _controller = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 100))
-      ..addListener(() {
-        setState(() {
-          for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < columns; j++) {
-              if (Random().nextDouble() > 0.95) {
-                _matrix[i][j] = _randomChar();
-              }
-            }
-          }
-        });
-      })
-      ..repeat();
-  }
-
-  String _randomChar() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    return chars[Random().nextInt(chars.length)];
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-      size: Size(widget.width, widget.height),
-      painter: MatrixPainter(_matrix, rows, columns),
-    );
-  }
-}
-
-class MatrixPainter extends CustomPainter {
-  final List<List<String>> matrix;
-  final int rows;
-  final int columns;
-
-  MatrixPainter(this.matrix, this.rows, this.columns);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final textPainter = TextPainter(
-      textDirection: TextDirection.ltr,
-    );
-
-    for (int i = 0; i < rows; i++) {
-      for (int j = 0; j < columns; j++) {
-        final textStyle = TextStyle(
-          color: Colors.greenAccent.shade400.withOpacity(Random().nextDouble()),
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-        );
-        textPainter.text = TextSpan(text: matrix[i][j], style: textStyle);
-        textPainter.layout();
-        textPainter.paint(canvas, Offset(j * 12.0, i * 20.0));
-      }
+  String _formatPeriodNumber(String periodNumber) {
+    String digits = periodNumber.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length > 3) {
+      return digits.substring(digits.length - 3);
     }
+    return digits.padLeft(3, '0');
+  }
+
+  String _getNextPeriodNumber(String currentPeriod, int offset) {
+    try {
+      String digits = currentPeriod.replaceAll(RegExp(r'[^0-9]'), '');
+      if (digits.isNotEmpty) {
+        // For 17-digit numbers, use BigInt to handle large numbers
+        if (digits.length == 17) {
+          BigInt current = BigInt.parse(digits);
+          BigInt next = current + BigInt.from(offset);
+          return next.toString(); // Return full 17-digit number
+        } else if (digits.length >= 3) {
+          // Handle shorter numbers normally
+          int current = int.parse(digits);
+          int next = current + offset;
+          return next.toString();
+        }
+      }
+    } catch (e) {
+      print("❌ Error calculating next period: $e");
+    }
+    return "???";
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  Size get preferredSize => const Size.fromHeight(245);
 }

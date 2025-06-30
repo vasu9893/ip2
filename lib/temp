@@ -79,7 +79,7 @@ class _GameScreenState extends State<GameScreen> {
   String wins = "0";
   String losses = "0";
   String prediction = "Big";
-  String periodNumber = "12";
+  String periodNumber = "Loading...";
 
   @override
   Widget build(BuildContext context) {
